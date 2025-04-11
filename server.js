@@ -1,5 +1,5 @@
 const express = require('express');
-const ytdl = require('@distube/ytdl-core'); // Updated import
+const ytdl = require('@distube/ytdl-core');
 const { pipeline } = require('stream');
 const yts = require('yt-search');
 const ffmpeg = require('ffmpeg-static');
@@ -10,28 +10,14 @@ const port = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-    res.send('YouTube Audio Downloader API. Use /download?song=<song_name>&cookies=<cookie_string> to download audio. Cookies are optional for restricted videos.');
+    res.send('YouTube Audio Downloader API. Use /download?song=<song_name> to download audio.');
 });
 
 app.get('/download', async (req, res) => {
     const songName = req.query.song;
-    const cookieString = req.query.cookies; // Optional cookies as a query param
 
     if (!songName || typeof songName !== 'string' || songName.trim() === '') {
         return res.status(400).json({ error: 'Please provide a valid song name.' });
-    }
-
-    // Parse cookies if provided
-    let cookies = [];
-    if (cookieString) {
-        try {
-            cookies = JSON.parse(cookieString);
-            if (!Array.isArray(cookies) || !cookies.every(c => c.name && c.value)) {
-                return res.status(400).json({ error: 'Cookies must be a valid JSON array of {name, value} objects.' });
-            }
-        } catch (err) {
-            return res.status(400).json({ error: 'Invalid cookies format. Provide a JSON array of {name, value} objects.' });
-        }
     }
 
     try {
@@ -51,26 +37,23 @@ app.get('/download', async (req, res) => {
             return res.status(400).json({ error: 'Video is too long (max 10 minutes).' });
         }
 
-        // Create an agent with cookies if provided
-        const requestOptions = cookies.length > 0 ? { agent: ytdl.createAgent(cookies) } : {};
-
         // Check if the video is accessible before downloading
         let videoInfo;
         try {
-            videoInfo = await ytdl.getBasicInfo(videoUrl, requestOptions);
+            videoInfo = await ytdl.getBasicInfo(videoUrl);
             console.log('Video title:', videoInfo.videoDetails.title);
         } catch (err) {
             console.error('getBasicInfo error:', err);
-            return res.status(500).json({ error: 'Failed to access video info. The video may be unavailable, restricted, or cookies may be required/invalid.' });
+            return res.status(500).json({ error: 'Failed to access video info. The video may be unavailable or restricted.' });
         }
 
         // Download audio stream
         let audioStream;
         try {
-            audioStream = ytdl(videoUrl, { quality: 'highestaudio', filter: 'audioonly', ...requestOptions });
+            audioStream = ytdl(videoUrl, { quality: 'highestaudio', filter: 'audioonly' });
         } catch (err) {
             console.error('ytdl error:', err);
-            return res.status(500).json({ error: 'Failed to fetch audio stream from YouTube. The video may be unavailable, restricted, or cookies may be required/invalid.' });
+            return res.status(500).json({ error: 'Failed to fetch audio stream from YouTube. The video may be unavailable or restricted.' });
         }
 
         // Set headers for file download
