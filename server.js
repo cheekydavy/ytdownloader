@@ -22,16 +22,21 @@ app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1); // Trust Heroku's proxy to fix the rate limiter
 
 app.get('/', (req, res) => {
-    res.send('YouTube Downloader API. Use /download/audio?song=<song_name> to rip audio or /download/video?song=<song_name> to rip video.');
+    res.send('YouTube Downloader API. Use /download/audio?song=<song_name>&quality=<quality> to rip audio or /download/video?song=<song_name>&quality=<quality> to rip video.');
 });
 
 // Download audio endpoint
 app.get('/download/audio', async (req, res) => {
     const songName = req.query.song;
+    const quality = req.query.quality;
 
     if (!songName || typeof songName !== 'string' || songName.trim() === '') {
         return res.status(400).json({ error: 'Please provide a song name.' });
     }
+
+    // Validate quality parameter
+    const validAudioQualities = ['128K', '192K', '320K'];
+    const audioQuality = validAudioQualities.includes(quality) ? quality : '192K'; // Default to 192K
 
     try {
         // Search YouTube for the song
@@ -55,11 +60,11 @@ app.get('/download/audio', async (req, res) => {
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir);
         }
-        const outputFile = path.join(tempDir, `${videoTitle}.mp3`);
+        const outputFile = path.join(tempDir, `${videoTitle}_${audioQuality}.mp3`);
         const cookiesFile = path.join(__dirname, 'cookies.txt');
 
-        // Use yt-dlp to download audio with cookies
-        const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality 192K --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
+        // Use yt-dlp to download audio with cookies and specified quality
+        const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
         console.log(`[Audio] Running yt-dlp command: ${ytDlpCommand}`);
         const { stdout, stderr } = await execPromise(ytDlpCommand);
         console.log(`[Audio] yt-dlp stdout: ${stdout}`);
@@ -72,7 +77,7 @@ app.get('/download/audio', async (req, res) => {
         }
 
         // Set headers and send the file
-        res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}.mp3"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}_${audioQuality}.mp3"`);
         res.setHeader('Content-Type', 'audio/mpeg');
         const fileStream = fs.createReadStream(outputFile);
         fileStream.pipe(res);
@@ -91,10 +96,16 @@ app.get('/download/audio', async (req, res) => {
 // Download video endpoint
 app.get('/download/video', async (req, res) => {
     const songName = req.query.song;
+    const quality = req.query.quality;
 
     if (!songName || typeof songName !== 'string' || songName.trim() === '') {
         return res.status(400).json({ error: 'Please provide a song name.' });
     }
+
+    // Validate quality parameter
+    const validVideoQualities = ['144p', '240p', '360p', '480p', '720p', '1080p'];
+    const videoQuality = validVideoQualities.includes(quality) ? quality : '720p'; // Default to 720p
+    const qualityHeight = videoQuality.replace('p', ''); // e.g., "1080p" -> "1080"
 
     try {
         // Search YouTube for the video
@@ -122,11 +133,11 @@ app.get('/download/video', async (req, res) => {
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir);
         }
-        const outputFile = path.join(tempDir, `${videoTitle}.mp4`);
+        const outputFile = path.join(tempDir, `${videoTitle}_${videoQuality}.mp4`);
         const cookiesFile = path.join(__dirname, 'cookies.txt');
 
-        // Use yt-dlp to download video with cookies
-        const ytDlpCommand = `yt-dlp -f "best[height<=720]" --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
+        // Use yt-dlp to download video with cookies and specified quality
+        const ytDlpCommand = `yt-dlp -f "best[height<=${qualityHeight}]" --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
         console.log(`[Video] Running yt-dlp command: ${ytDlpCommand}`);
         let stdout, stderr;
         try {
@@ -153,7 +164,7 @@ app.get('/download/video', async (req, res) => {
         console.log(`[Video] Downloaded file size: ${fileStats.size} bytes`);
 
         // Set headers and send the file
-        res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}.mp4"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}_${videoQuality}.mp4"`);
         res.setHeader('Content-Type', 'video/mp4');
         const fileStream = fs.createReadStream(outputFile);
         fileStream.pipe(res);
