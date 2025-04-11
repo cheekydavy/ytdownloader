@@ -13,7 +13,7 @@ const execPromise = promisify(exec);
 // Rate-limit requests to avoid hitting YouTube's limits
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per window
+    max: 500, // Increased from 100 to 500 requests per window
     message: 'Too many requests, slow the fuck down, asshole.',
 });
 app.use('/download', limiter);
@@ -45,9 +45,9 @@ app.get('/download/audio', async (req, res) => {
         const videoUrl = video.url;
         const videoTitle = video.title.replace(/[^a-zA-Z0-9]/g, '_');
 
-        // Validate video duration (max 10 minutes)
-        if (video.seconds > 600) {
-            return res.status(400).json({ error: 'This video is too fucking long (max 10 minutes), asshole.' });
+        // Validate video duration (max 30 minutes)
+        if (video.seconds > 1800) {
+            return res.status(400).json({ error: 'This video is too fucking long (max 30 minutes), asshole.' });
         }
 
         // Create a temp directory for the file
@@ -60,10 +60,14 @@ app.get('/download/audio', async (req, res) => {
 
         // Use yt-dlp to download audio with cookies
         const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality 192K --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
-        await execPromise(ytDlpCommand);
+        console.log(`[Audio] Running yt-dlp command: ${ytDlpCommand}`);
+        const { stdout, stderr } = await execPromise(ytDlpCommand);
+        console.log(`[Audio] yt-dlp stdout: ${stdout}`);
+        console.log(`[Audio] yt-dlp stderr: ${stderr}`);
 
         // Check if the file exists
         if (!fs.existsSync(outputFile)) {
+            console.error('[Audio] Output file not found after yt-dlp command.');
             return res.status(500).json({ error: 'Failed to download the fucking audio, shit went wrong.' });
         }
 
@@ -79,7 +83,7 @@ app.get('/download/audio', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error:', error);
+        console.error('[Audio] Error in /download/audio:', error);
         res.status(500).json({ error: 'Failed to search or download the audio, shit hit the fan.' });
     }
 });
@@ -94,19 +98,23 @@ app.get('/download/video', async (req, res) => {
 
     try {
         // Search YouTube for the video
+        console.log(`[Video] Searching for song: ${songName}`);
         const searchResults = await yts(songName);
         const video = searchResults.videos[0];
 
         if (!video) {
+            console.error('[Video] No videos found for the search query.');
             return res.status(404).json({ error: 'No fucking videos found for this song, shithead.' });
         }
 
         const videoUrl = video.url;
         const videoTitle = video.title.replace(/[^a-zA-Z0-9]/g, '_');
+        console.log(`[Video] Found video: ${video.title} (${videoUrl})`);
 
-        // Validate video duration (max 10 minutes)
-        if (video.seconds > 600) {
-            return res.status(400).json({ error: 'This video is too fucking long (max 10 minutes), asshole.' });
+        // Validate video duration (max 30 minutes)
+        if (video.seconds > 1800) {
+            console.error(`[Video] Video duration (${video.seconds} seconds) exceeds the 30-minute limit.`);
+            return res.status(400).json({ error: 'This video is too fucking long (max 30 minutes), asshole.' });
         }
 
         // Create a temp directory for the file
@@ -118,13 +126,31 @@ app.get('/download/video', async (req, res) => {
         const cookiesFile = path.join(__dirname, 'cookies.txt');
 
         // Use yt-dlp to download video with cookies
-        const ytDlpCommand = `yt-dlp -f "bestvideo+bestaudio/best" --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
-        await execPromise(ytDlpCommand);
+        const ytDlpCommand = `yt-dlp -f "best[height<=720]" --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
+        console.log(`[Video] Running yt-dlp command: ${ytDlpCommand}`);
+        let stdout, stderr;
+        try {
+            const result = await execPromise(ytDlpCommand);
+            stdout = result.stdout;
+            stderr = result.stderr;
+        } catch (err) {
+            console.error('[Video] yt-dlp command failed:', err);
+            console.error('[Video] yt-dlp stdout:', err.stdout || 'No stdout');
+            console.error('[Video] yt-dlp stderr:', err.stderr || 'No stderr');
+            throw err; // Re-throw to hit the outer catch block
+        }
+        console.log(`[Video] yt-dlp stdout: ${stdout}`);
+        console.log(`[Video] yt-dlp stderr: ${stderr}`);
 
         // Check if the file exists
         if (!fs.existsSync(outputFile)) {
+            console.error('[Video] Output file not found after yt-dlp command.');
             return res.status(500).json({ error: 'Failed to download the fucking video, shit went wrong.' });
         }
+
+        // Log file size for debugging
+        const fileStats = fs.statSync(outputFile);
+        console.log(`[Video] Downloaded file size: ${fileStats.size} bytes`);
 
         // Set headers and send the file
         res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}.mp4"`);
@@ -134,11 +160,16 @@ app.get('/download/video', async (req, res) => {
 
         // Clean up the temp file after sending
         fileStream.on('end', () => {
+            console.log('[Video] File sent successfully, cleaning up.');
             fs.unlinkSync(outputFile);
         });
 
+        fileStream.on('error', (err) => {
+            console.error('[Video] Error streaming file to client:', err);
+        });
+
     } catch (error) {
-        console.error('Error:', error);
+        console.error('[Video] Error in /download/video:', error);
         res.status(500).json({ error: 'Failed to search or download the video, shit hit the fan.' });
     }
 });
