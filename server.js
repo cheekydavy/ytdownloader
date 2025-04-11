@@ -3,9 +3,18 @@ const ytdl = require('@distube/ytdl-core');
 const { pipeline } = require('stream');
 const yts = require('yt-search');
 const ffmpeg = require('ffmpeg-static');
+const rateLimit = require('express-rate-limit'); // For rate-limiting
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Rate-limit requests to avoid hitting YouTube's limits
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per window
+    message: 'Too many requests, please try again later.',
+});
+app.use('/download', limiter);
 
 app.use(express.urlencoded({ extended: true }));
 
@@ -21,8 +30,8 @@ app.get('/download', async (req, res) => {
     }
 
     try {
-        // Search YouTube for the song
-        const searchResults = await yts(songName);
+        // Search YouTube for the song, prioritize official audio
+        const searchResults = await yts(`${songName} official audio`);
         const video = searchResults.videos[0];
 
         if (!video) {
@@ -37,20 +46,42 @@ app.get('/download', async (req, res) => {
             return res.status(400).json({ error: 'Video is too long (max 10 minutes).' });
         }
 
-        // Check if the video is accessible before downloading
+        // Add a user-agent to make requests look like they're from a browser
+        const requestOptions = {
+            requestOptions: {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+            }
+        };
+
+        // Check if the video is accessible before downloading, with retry logic for 429
         let videoInfo;
-        try {
-            videoInfo = await ytdl.getBasicInfo(videoUrl);
-            console.log('Video title:', videoInfo.videoDetails.title);
-        } catch (err) {
-            console.error('getBasicInfo error:', err);
-            return res.status(500).json({ error: 'Failed to access video info. The video may be unavailable or restricted.' });
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                videoInfo = await ytdl.getBasicInfo(videoUrl, requestOptions);
+                console.log('Video title:', videoInfo.videoDetails.title);
+                break; // Success, exit retry loop
+            } catch (err) {
+                console.error('getBasicInfo error:', err);
+                if (err.statusCode === 429) {
+                    retries--;
+                    if (retries === 0) {
+                        return res.status(429).json({ error: 'Rate limit exceeded. Please try again later.' });
+                    }
+                    console.log(`Rate limit hit, retrying (${retries} attempts left)...`);
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retrying
+                } else {
+                    return res.status(500).json({ error: 'Failed to access video info. The video may be unavailable or restricted.' });
+                }
+            }
         }
 
         // Download audio stream
         let audioStream;
         try {
-            audioStream = ytdl(videoUrl, { quality: 'highestaudio', filter: 'audioonly' });
+            audioStream = ytdl(videoUrl, { quality: 'highestaudio', filter: 'audioonly', ...requestOptions });
         } catch (err) {
             console.error('ytdl error:', err);
             return res.status(500).json({ error: 'Failed to fetch audio stream from YouTube. The video may be unavailable or restricted.' });
