@@ -22,15 +22,20 @@ app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1); // Trust Heroku's proxy to fix the goddamn rate limiter
 
 app.get('/', (req, res) => {
-    res.send('YouTube Downloader API. Use /download/audio?song=<song_name> to rip audio or /download/video?song=<song_name> to rip video, you sneaky fuck.');
+    res.send('YouTube Downloader API. Use /download/audio?song=<song_name>&cookies=<your_cookies> to rip audio or /download/video?song=<song_name>&cookies=<your_cookies> to rip video, you sneaky fuck.');
 });
 
 // Download audio endpoint
 app.get('/download/audio', async (req, res) => {
     const songName = req.query.song;
+    let cookies = req.query.cookies;
 
     if (!songName || typeof songName !== 'string' || songName.trim() === '') {
         return res.status(400).json({ error: 'Give me a fucking song name, you lazy bastard.' });
+    }
+
+    if (!cookies) {
+        return res.status(400).json({ error: 'You need to pass cookies to bypass YouTube\'s bot detection, dumbass.' });
     }
 
     try {
@@ -56,10 +61,20 @@ app.get('/download/audio', async (req, res) => {
             fs.mkdirSync(tempDir);
         }
         const outputFile = path.join(tempDir, `${videoTitle}.mp3`);
+        const cookiesFile = path.join(tempDir, 'cookies.txt');
 
-        // Use yt-dlp to download audio
-        const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality 192K -o "${outputFile}" "${videoUrl}"`;
+        // Decode URL-encoded cookies and write to a temp file
+        cookies = decodeURIComponent(cookies);
+        fs.writeFileSync(cookiesFile, cookies);
+
+        // Use yt-dlp to download audio with cookies
+        const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality 192K --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
         await execPromise(ytDlpCommand);
+
+        // Clean up cookies file
+        if (fs.existsSync(cookiesFile)) {
+            fs.unlinkSync(cookiesFile);
+        }
 
         // Check if the file exists
         if (!fs.existsSync(outputFile)) {
@@ -86,9 +101,14 @@ app.get('/download/audio', async (req, res) => {
 // Download video endpoint
 app.get('/download/video', async (req, res) => {
     const songName = req.query.song;
+    let cookies = req.query.cookies;
 
     if (!songName || typeof songName !== 'string' || songName.trim() === '') {
         return res.status(400).json({ error: 'Give me a fucking song name, you lazy bastard.' });
+    }
+
+    if (!cookies) {
+        return res.status(400).json({ error: 'You need to pass cookies to bypass YouTube\'s bot detection, dumbass.' });
     }
 
     try {
@@ -114,10 +134,20 @@ app.get('/download/video', async (req, res) => {
             fs.mkdirSync(tempDir);
         }
         const outputFile = path.join(tempDir, `${videoTitle}.mp4`);
+        const cookiesFile = path.join(tempDir, 'cookies.txt');
 
-        // Use yt-dlp to download video
-        const ytDlpCommand = `yt-dlp -f "bestvideo+bestaudio/best" -o "${outputFile}" "${videoUrl}"`;
+        // Decode URL-encoded cookies and write to a temp file
+        cookies = decodeURIComponent(cookies);
+        fs.writeFileSync(cookiesFile, cookies);
+
+        // Use yt-dlp to download video with cookies
+        const ytDlpCommand = `yt-dlp -f "bestvideo+bestaudio/best" --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
         await execPromise(ytDlpCommand);
+
+        // Clean up cookies file
+        if (fs.existsSync(cookiesFile)) {
+            fs.unlinkSync(cookiesFile);
+        }
 
         // Check if the file exists
         if (!fs.existsSync(outputFile)) {
