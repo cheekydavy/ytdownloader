@@ -13,16 +13,16 @@ const execPromise = promisify(exec);
 // Rate-limit requests to avoid hitting YouTube's limits
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 500, // Increased from 100 to 500 requests per window
-    message: 'Too many requests, slow the fuck down, asshole.',
+    max: 500, // Already increased to 500 requests per window
+    message: 'Too many requests, please slow down.',
 });
 app.use('/download', limiter);
 
 app.use(express.urlencoded({ extended: true }));
-app.set('trust proxy', 1); // Trust Heroku's proxy to fix the goddamn rate limiter
+app.set('trust proxy', 1); // Trust Heroku's proxy to fix the rate limiter
 
 app.get('/', (req, res) => {
-    res.send('YouTube Downloader API. Use /download/audio?song=<song_name> to rip audio or /download/video?song=<song_name> to rip video, you sneaky fuck.');
+    res.send('YouTube Downloader API. Use /download/audio?song=<song_name> to rip audio or /download/video?song=<song_name> to rip video.');
 });
 
 // Download audio endpoint
@@ -30,7 +30,7 @@ app.get('/download/audio', async (req, res) => {
     const songName = req.query.song;
 
     if (!songName || typeof songName !== 'string' || songName.trim() === '') {
-        return res.status(400).json({ error: 'Give me a fucking song name, you lazy bastard.' });
+        return res.status(400).json({ error: 'Please provide a song name.' });
     }
 
     try {
@@ -39,15 +39,15 @@ app.get('/download/audio', async (req, res) => {
         const video = searchResults.videos[0];
 
         if (!video) {
-            return res.status(404).json({ error: 'No fucking videos found for this song, shithead.' });
+            return res.status(404).json({ error: 'No videos found for this song.' });
         }
 
         const videoUrl = video.url;
         const videoTitle = video.title.replace(/[^a-zA-Z0-9]/g, '_');
 
-        // Validate video duration (max 30 minutes)
-        if (video.seconds > 1800) {
-            return res.status(400).json({ error: 'This video is too fucking long (max 30 minutes), asshole.' });
+        // Validate video duration (max 2 hours)
+        if (video.seconds > 7200) {
+            return res.status(400).json({ error: 'This video is too long (max 2 hours).' });
         }
 
         // Create a temp directory for the file
@@ -68,7 +68,7 @@ app.get('/download/audio', async (req, res) => {
         // Check if the file exists
         if (!fs.existsSync(outputFile)) {
             console.error('[Audio] Output file not found after yt-dlp command.');
-            return res.status(500).json({ error: 'Failed to download the fucking audio, shit went wrong.' });
+            return res.status(500).json({ error: 'Failed to download the audio.' });
         }
 
         // Set headers and send the file
@@ -84,7 +84,7 @@ app.get('/download/audio', async (req, res) => {
 
     } catch (error) {
         console.error('[Audio] Error in /download/audio:', error);
-        res.status(500).json({ error: 'Failed to search or download the audio, shit hit the fan.' });
+        res.status(500).json({ error: 'Failed to search or download the audio.' });
     }
 });
 
@@ -93,7 +93,7 @@ app.get('/download/video', async (req, res) => {
     const songName = req.query.song;
 
     if (!songName || typeof songName !== 'string' || songName.trim() === '') {
-        return res.status(400).json({ error: 'Give me a fucking song name, you lazy bastard.' });
+        return res.status(400).json({ error: 'Please provide a song name.' });
     }
 
     try {
@@ -104,17 +104,17 @@ app.get('/download/video', async (req, res) => {
 
         if (!video) {
             console.error('[Video] No videos found for the search query.');
-            return res.status(404).json({ error: 'No fucking videos found for this song, shithead.' });
+            return res.status(404).json({ error: 'No videos found for this song.' });
         }
 
         const videoUrl = video.url;
         const videoTitle = video.title.replace(/[^a-zA-Z0-9]/g, '_');
         console.log(`[Video] Found video: ${video.title} (${videoUrl})`);
 
-        // Validate video duration (max 30 minutes)
-        if (video.seconds > 1800) {
-            console.error(`[Video] Video duration (${video.seconds} seconds) exceeds the 30-minute limit.`);
-            return res.status(400).json({ error: 'This video is too fucking long (max 30 minutes), asshole.' });
+        // Validate video duration (max 2 hours)
+        if (video.seconds > 7200) {
+            console.error(`[Video] Video duration (${video.seconds} seconds) exceeds the 2-hour limit.`);
+            return res.status(400).json({ error: 'This video is too long (max 2 hours).' });
         }
 
         // Create a temp directory for the file
@@ -137,7 +137,7 @@ app.get('/download/video', async (req, res) => {
             console.error('[Video] yt-dlp command failed:', err);
             console.error('[Video] yt-dlp stdout:', err.stdout || 'No stdout');
             console.error('[Video] yt-dlp stderr:', err.stderr || 'No stderr');
-            throw err; // Re-throw to hit the outer catch block
+            throw err;
         }
         console.log(`[Video] yt-dlp stdout: ${stdout}`);
         console.log(`[Video] yt-dlp stderr: ${stderr}`);
@@ -145,7 +145,7 @@ app.get('/download/video', async (req, res) => {
         // Check if the file exists
         if (!fs.existsSync(outputFile)) {
             console.error('[Video] Output file not found after yt-dlp command.');
-            return res.status(500).json({ error: 'Failed to download the fucking video, shit went wrong.' });
+            return res.status(500).json({ error: 'Failed to download the video.' });
         }
 
         // Log file size for debugging
@@ -170,10 +170,10 @@ app.get('/download/video', async (req, res) => {
 
     } catch (error) {
         console.error('[Video] Error in /download/video:', error);
-        res.status(500).json({ error: 'Failed to search or download the video, shit hit the fan.' });
+        res.status(500).json({ error: 'Failed to search or download the video.' });
     }
 });
 
 app.listen(port, () => {
-    console.log(`Server running on port ${port}, ready to rip some fucking audio and video.`);
+    console.log(`Server running on port ${port}, ready to rip audio and video.`);
 });
