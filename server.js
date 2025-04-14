@@ -128,16 +128,16 @@ app.get('/download/video', async (req, res) => {
     // Validate quality parameter, prioritize user choice, default to 1080p
     const validVideoQualities = ['144p', '240p', '360p', '480p', '720p', '1080p'];
     const videoQuality = validVideoQualities.includes(quality) ? quality : '1080p'; // Default to 1080p
-    // Map quality to yt-dlp format codes for precise selection
+    // Map quality to yt-dlp format codes for precise selection with fallbacks
     const qualityFormatMap = {
-        '144p': '160',  // 144p video + audio
-        '240p': '133',  // 240p video + audio
-        '360p': '134',  // 360p video + audio
-        '480p': '135',  // 480p video + audio
-        '720p': '136',  // 720p video + audio
-        '1080p': '137', // 1080p video + audio
+        '144p': ['160', '133', '134'],  // 144p, fallback to 240p, 360p
+        '240p': ['133', '134', '135'],  // 240p, fallback to 360p, 480p
+        '360p': ['134', '135', '136'],  // 360p, fallback to 480p, 720p
+        '480p': ['135', '136', '137'],  // 480p, fallback to 720p, 1080p
+        '720p': ['136', '137', '135'],  // 720p, fallback to 1080p, 480p
+        '1080p': ['137', '136', '135'], // 1080p, fallback to 720p, 480p
     };
-    const formatCode = qualityFormatMap[videoQuality] || '137'; // Fallback to 1080p
+    const formatCodes = qualityFormatMap[videoQuality] || ['137', '136', '135']; // Fallback to 1080p
 
     try {
         // Check cookies file
@@ -176,32 +176,56 @@ app.get('/download/video', async (req, res) => {
         }
         const outputFile = path.join(tempDir, `${videoTitle}_${videoQuality}_${cacheBuster}.mp4`);
 
-        // Use yt-dlp to download video with cookies and specified quality
-        const ytDlpCommand = `yt-dlp -f "${formatCode}+bestaudio/best" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
-        console.log(`[Video] Running yt-dlp command: ${ytDlpCommand}`);
+        // Try each format code until one works
         let stdout, stderr;
-        try {
-            const result = await execPromise(ytDlpCommand);
-            stdout = result.stdout;
-            stderr = result.stderr;
-        } catch (err) {
-            console.error('[Video] yt-dlp command failed:', err);
-            console.error('[Video] yt-dlp stdout:', err.stdout || 'No stdout');
-            console.error('[Video] yt-dlp stderr:', err.stderr || 'No stderr');
-            throw err;
-        }
-        console.log(`[Video] yt-dlp stdout: ${stdout}`);
-        console.log(`[Video] yt-dlp stderr: ${stderr}`);
+        let formatWorked = false;
+        for (const formatCode of formatCodes) {
+            try {
+                const ytDlpCommand = `yt-dlp -f "${formatCode}+bestaudio/best" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
+                console.log(`[Video] Running yt-dlp command with format ${formatCode}: ${ytDlpCommand}`);
+                const result = await execPromise(ytDlpCommand);
+                stdout = result.stdout;
+                stderr = result.stderr;
+                console.log(`[Video] yt-dlp stdout: ${stdout}`);
+                console.log(`[Video] yt-dlp stderr: ${stderr}`);
 
-        // Check if the file exists
-        if (!fs.existsSync(outputFile)) {
-            console.error('[Video] Output file not found after yt-dlp command.');
-            return res.status(500).json({ error: 'Failed to download the video.' });
+                // Check if the file exists and has a reasonable size
+                if (!fs.existsSync(outputFile)) {
+                    console.error(`[Video] Output file not found after yt-dlp command with format ${formatCode}.`);
+                    continue;
+                }
+
+                const fileStats = fs.statSync(outputFile);
+                const fileSize = fileStats.size;
+                console.log(`[Video] Downloaded file size with format ${formatCode}: ${fileSize} bytes`);
+
+                // Rough duration check
+                const roughBitrate = 1000000; // 1 Mbps for video + audio
+                const estimatedDuration = Math.floor((fileSize * 8) / roughBitrate);
+                console.log(`[Video] Estimated duration with format ${formatCode}: ${estimatedDuration}s (expected: ${durationSeconds}s)`);
+                const durationTolerance = 30;
+                if (Math.abs(durationSeconds - estimatedDuration) > durationTolerance) {
+                    console.error(`[Video] Duration mismatch with format ${formatCode}, trying next format.`);
+                    fs.unlinkSync(outputFile);
+                    continue;
+                }
+
+                formatWorked = true;
+                break;
+            } catch (err) {
+                console.error(`[Video] yt-dlp command failed with format ${formatCode}:`, err);
+                console.error(`[Video] yt-dlp stdout: ${err.stdout || 'No stdout'}`);
+                console.error(`[Video] yt-dlp stderr: ${err.stderr || 'No stderr'}`);
+                if (fs.existsSync(outputFile)) {
+                    fs.unlinkSync(outputFile);
+                }
+            }
         }
 
-        // Log file size for debugging
-        const fileStats = fs.statSync(outputFile);
-        console.log(`[Video] Downloaded file size: ${fileStats.size} bytes`);
+        if (!formatWorked) {
+            console.error('[Video] All format codes failed.');
+            return res.status(500).json({ error: 'Failed to download the video with any format.' });
+        }
 
         // Set headers and send the file
         res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}_${videoQuality}.mp4"`);
