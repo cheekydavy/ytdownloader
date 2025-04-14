@@ -44,6 +44,7 @@ app.get('/download/audio', async (req, res) => {
     const validAudioQualities = ['128K', '192K', '320K'];
     const audioQuality = validAudioQualities.includes(quality) ? quality : '192K'; // Default to 192K
 
+    let outputFile = null;
     try {
         // Check cookies file
         const cookiesFile = path.join(__dirname, 'cookies.txt');
@@ -79,7 +80,7 @@ app.get('/download/audio', async (req, res) => {
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir);
         }
-        const outputFile = path.join(tempDir, `${videoTitle}_${audioQuality}_${cacheBuster}.mp3`);
+        outputFile = path.join(tempDir, `${videoTitle}_${audioQuality}_${cacheBuster}.mp3`);
 
         // Use yt-dlp to download audio with cookies and specified quality
         const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
@@ -108,9 +109,17 @@ app.get('/download/audio', async (req, res) => {
             }
         });
 
+        fileStream.on('error', (err) => {
+            console.error('[Audio] Error streaming file to client: ' + err.message);
+        });
+
     } catch (error) {
-        console.error('[Audio] Error in /download/audio:', error);
-        res.status(500).json({ error: 'Failed to download the audio.' });
+        console.error('[Audio] Error in /download/audio: ' + error.message + ', Stack: ' + error.stack);
+        if (outputFile && fs.existsSync(outputFile)) {
+            fs.unlinkSync(outputFile);
+            console.log(`[Audio] Cleaned up temp file on error: ${outputFile}`);
+        }
+        res.status(500).json({ error: 'Failed to download the audio.', details: error.message });
     }
 });
 
@@ -137,8 +146,9 @@ app.get('/download/video', async (req, res) => {
         '720p': ['136', '137', '135'],  // 720p, fallback to 1080p, 480p
         '1080p': ['137', '136', '135'], // 1080p, fallback to 720p, 480p
     };
-    const formatCodes = qualityFormatMap[videoQuality] || ['137', '136', '135']; // Fallback to 1080p
+    let formatCodes = qualityFormatMap[videoQuality] || ['137', '136', '135']; // Fallback to 1080p
 
+    let outputFile = null;
     try {
         // Check cookies file
         const cookiesFile = path.join(__dirname, 'cookies.txt');
@@ -150,18 +160,24 @@ app.get('/download/video', async (req, res) => {
         console.log(`[Video] Cookies file content: ${cookiesContent}`);
 
         // Fetch video metadata using yt-dlp --dump-json with cookies
-        const metadataCommand = `yt-dlp --dump-json --cookies "${cookiesFile}" "${songUrl}"`;
-        console.log(`[Video] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
-        const { stdout: metadataStdout, stderr: metadataStderr } = await execPromise(metadataCommand);
-        if (metadataStderr) {
-            console.error(`[Video] Metadata fetch stderr: ${metadataStderr}`);
+        let videoInfo;
+        try {
+            const metadataCommand = `yt-dlp --dump-json --cookies "${cookiesFile}" "${songUrl}"`;
+            console.log(`[Video] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
+            const { stdout: metadataStdout, stderr: metadataStderr } = await execPromise(metadataCommand);
+            if (metadataStderr) {
+                console.error(`[Video] Metadata fetch stderr: ${metadataStderr}`);
+            }
+            videoInfo = JSON.parse(metadataStdout);
+        } catch (err) {
+            console.error(`[Video] Failed to fetch metadata: ${err.message}`);
+            throw new Error('Unable to fetch video metadata');
         }
-        const videoInfo = JSON.parse(metadataStdout);
 
         const videoTitle = videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_');
         const durationSeconds = videoInfo.duration;
 
-        console.log(`[Video] Video title: ${videoInfo.title}, duration: ${durationSeconds}s, quality: ${videoQuality}`);
+        console.log(`[Video] Video title: ${videoInfo.title}, duration: ${durationSeconds}s, requested quality: ${videoQuality}`);
 
         // Validate video duration (max 2 hours)
         if (durationSeconds > 7200) {
@@ -174,14 +190,48 @@ app.get('/download/video', async (req, res) => {
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir);
         }
-        const outputFile = path.join(tempDir, `${videoTitle}_${videoQuality}_${cacheBuster}.mp4`);
+        outputFile = path.join(tempDir, `${videoTitle}_${videoQuality}_${cacheBuster}.mp4`);
+
+        // Check available formats to ensure the requested quality is available
+        let availableFormats;
+        try {
+            const formatsCommand = `yt-dlp --list-formats --cookies "${cookiesFile}" "${songUrl}"`;
+            console.log(`[Video] Fetching available formats: ${formatsCommand}`);
+            const { stdout: formatsStdout, stderr: formatsStderr } = await execPromise(formatsCommand);
+            if (formatsStderr) {
+                console.error(`[Video] Formats fetch stderr: ${formatsStderr}`);
+            }
+            console.log(`[Video] Available formats: ${formatsStdout}`);
+            availableFormats = formatsStdout;
+        } catch (err) {
+            console.error(`[Video] Failed to fetch formats: ${err.message}`);
+            throw new Error('Unable to fetch available formats');
+        }
+
+        // Adjust format codes based on availability
+        const requestedFormats = formatCodes;
+        formatCodes = [];
+        for (const formatCode of requestedFormats) {
+            if (availableFormats.includes(formatCode)) {
+                formatCodes.push(formatCode);
+            }
+        }
+
+        // If no requested formats are available, fall back to a safe default
+        if (formatCodes.length === 0) {
+            console.warn(`[Video] Requested formats ${requestedFormats.join(', ')} not available. Falling back to default.`);
+            formatCodes = ['bestvideo[height<=720]+bestaudio/best']; // Safe fallback
+        }
+
+        console.log(`[Video] Using format codes: ${formatCodes.join(', ')}`);
 
         // Try each format code until one works
         let stdout, stderr;
         let formatWorked = false;
+        let usedFormatCode = null;
         for (const formatCode of formatCodes) {
             try {
-                const ytDlpCommand = `yt-dlp -f "${formatCode}+bestaudio/best" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
+                const ytDlpCommand = `yt-dlp -f "${formatCode}" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
                 console.log(`[Video] Running yt-dlp command with format ${formatCode}: ${ytDlpCommand}`);
                 const result = await execPromise(ytDlpCommand);
                 stdout = result.stdout;
@@ -206,14 +256,17 @@ app.get('/download/video', async (req, res) => {
                 const durationTolerance = 30;
                 if (Math.abs(durationSeconds - estimatedDuration) > durationTolerance) {
                     console.error(`[Video] Duration mismatch with format ${formatCode}, trying next format.`);
-                    fs.unlinkSync(outputFile);
+                    if (fs.existsSync(outputFile)) {
+                        fs.unlinkSync(outputFile);
+                    }
                     continue;
                 }
 
                 formatWorked = true;
+                usedFormatCode = formatCode;
                 break;
             } catch (err) {
-                console.error(`[Video] yt-dlp command failed with format ${formatCode}:`, err);
+                console.error(`[Video] yt-dlp command failed with format ${formatCode}: ${err.message}`);
                 console.error(`[Video] yt-dlp stdout: ${err.stdout || 'No stdout'}`);
                 console.error(`[Video] yt-dlp stderr: ${err.stderr || 'No stderr'}`);
                 if (fs.existsSync(outputFile)) {
@@ -224,8 +277,13 @@ app.get('/download/video', async (req, res) => {
 
         if (!formatWorked) {
             console.error('[Video] All format codes failed.');
-            return res.status(500).json({ error: 'Failed to download the video with any format.' });
+            return res.status(500).json({
+                error: 'Failed to download the video with any format.',
+                details: `All formats (${requestedFormats.join(', ')}) failed. Available formats: ${availableFormats}`,
+            });
         }
+
+        console.log(`[Video] Successfully downloaded with format ${usedFormatCode}`);
 
         // Set headers and send the file
         res.setHeader('Content-Disposition', `attachment; filename="${videoTitle}_${videoQuality}.mp4"`);
@@ -242,12 +300,23 @@ app.get('/download/video', async (req, res) => {
         });
 
         fileStream.on('error', (err) => {
-            console.error('[Video] Error streaming file to client:', err);
+            console.error('[Video] Error streaming file to client: ' + err.message);
+            if (fs.existsSync(outputFile)) {
+                fs.unlinkSync(outputFile);
+                console.log(`[Video] Cleaned up temp file on stream error: ${outputFile}`);
+            }
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Failed to stream the video.', details: err.message });
+            }
         });
 
     } catch (error) {
-        console.error('[Video] Error in /download/video:', error);
-        res.status(500).json({ error: 'Failed to download the video.' });
+        console.error('[Video] Error in /download/video: ' + error.message + ', Stack: ' + error.stack);
+        if (outputFile && fs.existsSync(outputFile)) {
+            fs.unlinkSync(outputFile);
+            console.log(`[Video] Cleaned up temp file on error: ${outputFile}`);
+        }
+        res.status(500).json({ error: 'Failed to download the video.', details: error.message });
     }
 });
 
