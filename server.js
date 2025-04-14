@@ -29,7 +29,7 @@ const isValidYouTubeUrl = (url) => {
     return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|shorts\/|embed\/)?[A-Za-z0-9_-]{11}(\?.*)?$/.test(url);
 };
 
-// Download audio endpoint
+// Download audio endpoint (unchanged)
 app.get('/download/audio', async (req, res) => {
     const songUrl = req.query.song;
     const quality = req.query.quality;
@@ -123,7 +123,7 @@ app.get('/download/audio', async (req, res) => {
     }
 });
 
-// Download video endpoint
+// Download video endpoint (updated)
 app.get('/download/video', async (req, res) => {
     const songUrl = req.query.song;
     const quality = req.query.quality;
@@ -136,17 +136,18 @@ app.get('/download/video', async (req, res) => {
 
     // Validate quality parameter, prioritize user choice, default to 1080p
     const validVideoQualities = ['144p', '240p', '360p', '480p', '720p', '1080p'];
-    const videoQuality = validVideoQualities.includes(quality) ? quality : '1080p'; // Default to 1080p
-    // Map quality to yt-dlp format codes for precise selection with fallbacks
+    const videoQuality = validVideoQualities.includes(quality) ? quality : '1080p';
+
+    // Map quality to yt-dlp format codes with combined formats and fallbacks
     const qualityFormatMap = {
-        '144p': ['160', '133', '134'],  // 144p, fallback to 240p, 360p
-        '240p': ['133', '134', '135'],  // 240p, fallback to 360p, 480p
-        '360p': ['134', '135', '136'],  // 360p, fallback to 480p, 720p
-        '480p': ['135', '136', '137'],  // 480p, fallback to 720p, 1080p
-        '720p': ['136', '137', '135'],  // 720p, fallback to 1080p, 480p
-        '1080p': ['137', '136', '135'], // 1080p, fallback to 720p, 480p
+        '144p': ['160+251', '133+251', '134+251'], // 144p video + best audio
+        '240p': ['133+251', '134+251', '135+251'], // 240p video + best audio
+        '360p': ['18', '134+251', '135+251', '136+251'], // Prefer format 18 (combined), then merge
+        '480p': ['135+251', '136+251', '137+251'],
+        '720p': ['136+251', '137+251', '135+251'],
+        '1080p': ['137+251', '136+251', '135+251'],
     };
-    let formatCodes = qualityFormatMap[videoQuality] || ['137', '136', '135']; // Fallback to 1080p
+    let formatCodes = qualityFormatMap[videoQuality] || ['137+251', '136+251', '135+251'];
 
     let outputFile = null;
     try {
@@ -212,7 +213,8 @@ app.get('/download/video', async (req, res) => {
         const requestedFormats = formatCodes;
         formatCodes = [];
         for (const formatCode of requestedFormats) {
-            if (availableFormats.includes(formatCode)) {
+            const [videoFormat] = formatCode.split('+'); // Split video+audio formats
+            if (availableFormats.includes(videoFormat)) {
                 formatCodes.push(formatCode);
             }
         }
@@ -220,10 +222,13 @@ app.get('/download/video', async (req, res) => {
         // If no requested formats are available, fall back to a safe default
         if (formatCodes.length === 0) {
             console.warn(`[Video] Requested formats ${requestedFormats.join(', ')} not available. Falling back to default.`);
-            formatCodes = ['bestvideo[height<=720]+bestaudio/best']; // Safe fallback
+            formatCodes = ['bestvideo[height<=720]+bestaudio/best', 'bestvideo[height<=480]+bestaudio/best', 'best'];
         }
 
         console.log(`[Video] Using format codes: ${formatCodes.join(', ')}`);
+
+        // Spoof user-agent to bypass potential YouTube restrictions
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36';
 
         // Try each format code until one works
         let stdout, stderr;
@@ -231,7 +236,7 @@ app.get('/download/video', async (req, res) => {
         let usedFormatCode = null;
         for (const formatCode of formatCodes) {
             try {
-                const ytDlpCommand = `yt-dlp -f "${formatCode}" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
+                const ytDlpCommand = `yt-dlp --user-agent "${userAgent}" -f "${formatCode}" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
                 console.log(`[Video] Running yt-dlp command with format ${formatCode}: ${ytDlpCommand}`);
                 const result = await execPromise(ytDlpCommand);
                 stdout = result.stdout;
