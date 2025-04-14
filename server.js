@@ -1,5 +1,4 @@
 const express = require('express');
-const yts = require('yt-search');
 const rateLimit = require('express-rate-limit');
 const { exec } = require('child_process');
 const fs = require('fs');
@@ -22,16 +21,23 @@ app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1); // Trust Heroku's proxy to fix the rate limiter
 
 app.get('/', (req, res) => {
-    res.send('YouTube Downloader API. Use /download/audio?song=<song_name>&quality=<quality> to rip audio or /download/video?song=<song_name>&quality=<quality> to rip video.');
+    res.send('YouTube Downloader API. Use /download/audio?song=<song_url>&quality=<quality> to rip audio or /download/video?song=<song_url>&quality=<quality> to rip video.');
 });
+
+// Validate YouTube URL
+const isValidYouTubeUrl = (url) => {
+    return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|shorts\/|embed\/)?[A-Za-z0-9_-]{11}(\?.*)?$/.test(url);
+};
 
 // Download audio endpoint
 app.get('/download/audio', async (req, res) => {
-    const songName = req.query.song;
+    const songUrl = req.query.song;
     const quality = req.query.quality;
+    const cacheBuster = req.query.cb || Date.now(); // For debugging cache issues
 
-    if (!songName || typeof songName !== 'string' || songName.trim() === '') {
-        return res.status(400).json({ error: 'Please provide a song name.' });
+    if (!songUrl || typeof songUrl !== 'string' || !isValidYouTubeUrl(songUrl)) {
+        console.error(`[Audio] Invalid or missing YouTube URL: ${songUrl}`);
+        return res.status(400).json({ error: 'Please provide a valid YouTube URL.' });
     }
 
     // Validate quality parameter
@@ -39,19 +45,20 @@ app.get('/download/audio', async (req, res) => {
     const audioQuality = validAudioQualities.includes(quality) ? quality : '192K'; // Default to 192K
 
     try {
-        // Search YouTube for the song
-        const searchResults = await yts(`${songName} official audio`);
-        const video = searchResults.videos[0];
+        // Fetch video metadata using yt-dlp --dump-json
+        const metadataCommand = `yt-dlp --dump-json "${songUrl}"`;
+        console.log(`[Audio] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
+        const { stdout: metadataStdout } = await execPromise(metadataCommand);
+        const videoInfo = JSON.parse(metadataStdout);
 
-        if (!video) {
-            return res.status(404).json({ error: 'No videos found for this song.' });
-        }
+        const videoTitle = videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_');
+        const durationSeconds = videoInfo.duration;
 
-        const videoUrl = video.url;
-        const videoTitle = video.title.replace(/[^a-zA-Z0-9]/g, '_');
+        console.log(`[Audio] Video title: ${videoInfo.title}, duration: ${durationSeconds}s, quality: ${audioQuality}`);
 
         // Validate video duration (max 2 hours)
-        if (video.seconds > 7200) {
+        if (durationSeconds > 7200) {
+            console.error(`[Audio] Video duration (${durationSeconds} seconds) exceeds the 2-hour limit.`);
             return res.status(400).json({ error: 'This video is too long (max 2 hours).' });
         }
 
@@ -60,11 +67,11 @@ app.get('/download/audio', async (req, res) => {
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir);
         }
-        const outputFile = path.join(tempDir, `${videoTitle}_${audioQuality}.mp3`);
+        const outputFile = path.join(tempDir, `${videoTitle}_${audioQuality}_${cacheBuster}.mp3`);
         const cookiesFile = path.join(__dirname, 'cookies.txt');
 
         // Use yt-dlp to download audio with cookies and specified quality
-        const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
+        const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
         console.log(`[Audio] Running yt-dlp command: ${ytDlpCommand}`);
         const { stdout, stderr } = await execPromise(ytDlpCommand);
         console.log(`[Audio] yt-dlp stdout: ${stdout}`);
@@ -84,7 +91,10 @@ app.get('/download/audio', async (req, res) => {
 
         // Clean up the temp file after sending
         fileStream.on('end', () => {
-            fs.unlinkSync(outputFile);
+            if (fs.existsSync(outputFile)) {
+                fs.unlinkSync(outputFile);
+                console.log(`[Audio] Cleaned up temp file: ${outputFile}`);
+            }
         });
 
     } catch (error) {
@@ -95,36 +105,44 @@ app.get('/download/audio', async (req, res) => {
 
 // Download video endpoint
 app.get('/download/video', async (req, res) => {
-    const songName = req.query.song;
+    const songUrl = req.query.song;
     const quality = req.query.quality;
+    const cacheBuster = req.query.cb || Date.now();
 
-    if (!songName || typeof songName !== 'string' || songName.trim() === '') {
-        return res.status(400).json({ error: 'Please provide a song name.' });
+    if (!songUrl || typeof songUrl !== 'string' || !isValidYouTubeUrl(songUrl)) {
+        console.error(`[Video] Invalid or missing YouTube URL: ${songUrl}`);
+        return res.status(400).json({ error: 'Please provide a valid YouTube URL.' });
     }
 
-    // Validate quality parameter
+    // Validate quality parameter, prioritize user choice, default to 1080p
     const validVideoQualities = ['144p', '240p', '360p', '480p', '720p', '1080p'];
-    const videoQuality = validVideoQualities.includes(quality) ? quality : '720p'; // Default to 720p
-    const qualityHeight = videoQuality.replace('p', ''); // e.g., "1080p" -> "1080"
+    const videoQuality = validVideoQualities.includes(quality) ? quality : '1080p'; // Default to 1080p
+    // Map quality to yt-dlp format codes for precise selection
+    const qualityFormatMap = {
+        '144p': '160',  // 144p video + audio
+        '240p': '133',  // 240p video + audio
+        '360p': '134',  // 360p video + audio
+        '480p': '135',  // 480p video + audio
+        '720p': '136',  // 720p video + audio
+        '1080p': '137', // 1080p video + audio
+    };
+    const formatCode = qualityFormatMap[videoQuality] || '137'; // Fallback to 1080p
 
     try {
-        // Search YouTube for the video
-        console.log(`[Video] Searching for song: ${songName}`);
-        const searchResults = await yts(songName);
-        const video = searchResults.videos[0];
+        // Fetch video metadata using yt-dlp --dump-json
+        const metadataCommand = `yt-dlp --dump-json "${songUrl}"`;
+        console.log(`[Video] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
+        const { stdout: metadataStdout } = await execPromise(metadataCommand);
+        const videoInfo = JSON.parse(metadataStdout);
 
-        if (!video) {
-            console.error('[Video] No videos found for the search query.');
-            return res.status(404).json({ error: 'No videos found for this song.' });
-        }
+        const videoTitle = videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_');
+        const durationSeconds = videoInfo.duration;
 
-        const videoUrl = video.url;
-        const videoTitle = video.title.replace(/[^a-zA-Z0-9]/g, '_');
-        console.log(`[Video] Found video: ${video.title} (${videoUrl})`);
+        console.log(`[Video] Video title: ${videoInfo.title}, duration: ${durationSeconds}s, quality: ${videoQuality}`);
 
         // Validate video duration (max 2 hours)
-        if (video.seconds > 7200) {
-            console.error(`[Video] Video duration (${video.seconds} seconds) exceeds the 2-hour limit.`);
+        if (durationSeconds > 7200) {
+            console.error(`[Video] Video duration (${durationSeconds} seconds) exceeds the 2-hour limit.`);
             return res.status(400).json({ error: 'This video is too long (max 2 hours).' });
         }
 
@@ -133,11 +151,11 @@ app.get('/download/video', async (req, res) => {
         if (!fs.existsSync(tempDir)) {
             fs.mkdirSync(tempDir);
         }
-        const outputFile = path.join(tempDir, `${videoTitle}_${videoQuality}.mp4`);
+        const outputFile = path.join(tempDir, `${videoTitle}_${videoQuality}_${cacheBuster}.mp4`);
         const cookiesFile = path.join(__dirname, 'cookies.txt');
 
         // Use yt-dlp to download video with cookies and specified quality
-        const ytDlpCommand = `yt-dlp -f "best[height<=${qualityHeight}]" --cookies "${cookiesFile}" -o "${outputFile}" "${videoUrl}"`;
+        const ytDlpCommand = `yt-dlp -f "${formatCode}+bestaudio/best" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
         console.log(`[Video] Running yt-dlp command: ${ytDlpCommand}`);
         let stdout, stderr;
         try {
@@ -171,8 +189,10 @@ app.get('/download/video', async (req, res) => {
 
         // Clean up the temp file after sending
         fileStream.on('end', () => {
-            console.log('[Video] File sent successfully, cleaning up.');
-            fs.unlinkSync(outputFile);
+            if (fs.existsSync(outputFile)) {
+                fs.unlinkSync(outputFile);
+                console.log(`[Video] Cleaned up temp file: ${outputFile}`);
+            }
         });
 
         fileStream.on('error', (err) => {
