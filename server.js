@@ -45,10 +45,22 @@ app.get('/download/audio', async (req, res) => {
     const audioQuality = validAudioQualities.includes(quality) ? quality : '192K'; // Default to 192K
 
     try {
-        // Fetch video metadata using yt-dlp --dump-json
-        const metadataCommand = `yt-dlp --dump-json "${songUrl}"`;
+        // Check cookies file
+        const cookiesFile = path.join(__dirname, 'cookies.txt');
+        if (!fs.existsSync(cookiesFile)) {
+            console.error(`[Audio] Cookies file not found at ${cookiesFile}`);
+            return res.status(500).json({ error: 'Cookies file missing, can’t authenticate with YouTube.' });
+        }
+        const cookiesContent = fs.readFileSync(cookiesFile, 'utf8');
+        console.log(`[Audio] Cookies file content: ${cookiesContent}`);
+
+        // Fetch video metadata using yt-dlp --dump-json with cookies
+        const metadataCommand = `yt-dlp --dump-json --cookies "${cookiesFile}" "${songUrl}"`;
         console.log(`[Audio] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
-        const { stdout: metadataStdout } = await execPromise(metadataCommand);
+        const { stdout: metadataStdout, stderr: metadataStderr } = await execPromise(metadataCommand);
+        if (metadataStderr) {
+            console.error(`[Audio] Metadata fetch stderr: ${metadataStderr}`);
+        }
         const videoInfo = JSON.parse(metadataStdout);
 
         const videoTitle = videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_');
@@ -68,7 +80,6 @@ app.get('/download/audio', async (req, res) => {
             fs.mkdirSync(tempDir);
         }
         const outputFile = path.join(tempDir, `${videoTitle}_${audioQuality}_${cacheBuster}.mp3`);
-        const cookiesFile = path.join(__dirname, 'cookies.txt');
 
         // Use yt-dlp to download audio with cookies and specified quality
         const ytDlpCommand = `yt-dlp -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
@@ -99,7 +110,7 @@ app.get('/download/audio', async (req, res) => {
 
     } catch (error) {
         console.error('[Audio] Error in /download/audio:', error);
-        res.status(500).json({ error: 'Failed to search or download the audio.' });
+        res.status(500).json({ error: 'Failed to download the audio.' });
     }
 });
 
@@ -129,10 +140,22 @@ app.get('/download/video', async (req, res) => {
     const formatCode = qualityFormatMap[videoQuality] || '137'; // Fallback to 1080p
 
     try {
-        // Fetch video metadata using yt-dlp --dump-json
-        const metadataCommand = `yt-dlp --dump-json "${songUrl}"`;
+        // Check cookies file
+        const cookiesFile = path.join(__dirname, 'cookies.txt');
+        if (!fs.existsSync(cookiesFile)) {
+            console.error(`[Video] Cookies file not found at ${cookiesFile}`);
+            return res.status(500).json({ error: 'Cookies file missing, can’t authenticate with YouTube.' });
+        }
+        const cookiesContent = fs.readFileSync(cookiesFile, 'utf8');
+        console.log(`[Video] Cookies file content: ${cookiesContent}`);
+
+        // Fetch video metadata using yt-dlp --dump-json with cookies
+        const metadataCommand = `yt-dlp --dump-json --cookies "${cookiesFile}" "${songUrl}"`;
         console.log(`[Video] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
-        const { stdout: metadataStdout } = await execPromise(metadataCommand);
+        const { stdout: metadataStdout, stderr: metadataStderr } = await execPromise(metadataCommand);
+        if (metadataStderr) {
+            console.error(`[Video] Metadata fetch stderr: ${metadataStderr}`);
+        }
         const videoInfo = JSON.parse(metadataStdout);
 
         const videoTitle = videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_');
@@ -152,7 +175,6 @@ app.get('/download/video', async (req, res) => {
             fs.mkdirSync(tempDir);
         }
         const outputFile = path.join(tempDir, `${videoTitle}_${videoQuality}_${cacheBuster}.mp4`);
-        const cookiesFile = path.join(__dirname, 'cookies.txt');
 
         // Use yt-dlp to download video with cookies and specified quality
         const ytDlpCommand = `yt-dlp -f "${formatCode}+bestaudio/best" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
@@ -201,7 +223,7 @@ app.get('/download/video', async (req, res) => {
 
     } catch (error) {
         console.error('[Video] Error in /download/video:', error);
-        res.status(500).json({ error: 'Failed to search or download the video.' });
+        res.status(500).json({ error: 'Failed to download the video.' });
     }
 });
 
