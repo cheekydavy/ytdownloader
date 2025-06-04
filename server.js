@@ -66,7 +66,7 @@ const isValidYouTubeUrl = (url) => {
     return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|shorts\/|embed\/)?[A-Za-z0-9_-]{11}(\?.*)?$/.test(url);
 };
 
-// Download audio endpoint (unchanged)
+// Download audio endpoint
 app.get('/download/audio', async (req, res) => {
     const songUrl = req.query.song;
     const quality = req.query.quality;
@@ -92,9 +92,11 @@ app.get('/download/audio', async (req, res) => {
         const cookiesContent = fs.readFileSync(cookiesFile, 'utf8');
         console.log(`[Audio] Cookies file content: ${cookiesContent}`);
 
-        // Fetch video metadata using yt-dlp --dump-json with cookies
+        // Spoof user-agent to bypass potential YouTube restrictions
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36';
         const venvPath = path.join(__dirname, 'venv');
-        const metadataCommand = `${venvPath}/bin/yt-dlp --dump-json --cookies "${cookiesFile}" "${songUrl}"`;
+        // Fetch video metadata using yt-dlp --dump-json with cookies
+        const metadataCommand = `${venvPath}/bin/yt-dlp --dump-json --cookies "${cookiesFile}" --user-agent "${userAgent}" --verbose "${songUrl}"`;
         console.log(`[Audio] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
         console.log(`[Audio] Running command: ${metadataCommand}`);
         const { stdout: metadataStdout, stderr: metadataStderr } = await execPromise(metadataCommand);
@@ -122,7 +124,7 @@ app.get('/download/audio', async (req, res) => {
         outputFile = path.join(tempDir, `${videoTitle}_${audioQuality}_${cacheBuster}.mp3`);
 
         // Use yt-dlp to download audio with cookies and specified quality
-        const ytDlpCommand = `${venvPath}/bin/yt-dlp -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
+        const ytDlpCommand = `${venvPath}/bin/yt-dlp -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" --user-agent "${userAgent}" --verbose -o "${outputFile}" "${songUrl}"`;
         console.log(`[Audio] Running yt-dlp command: ${ytDlpCommand}`);
         const { stdout, stderr } = await execPromise(ytDlpCommand);
         console.log(`[Audio] yt-dlp stdout: ${stdout}`);
@@ -162,7 +164,7 @@ app.get('/download/audio', async (req, res) => {
     }
 });
 
-// Download video endpoint (updated)
+// Download video endpoint
 app.get('/download/video', async (req, res) => {
     const songUrl = req.query.song;
     const quality = req.query.quality;
@@ -203,7 +205,8 @@ app.get('/download/video', async (req, res) => {
         let videoInfo;
         try {
             const venvPath = path.join(__dirname, 'venv');
-            const metadataCommand = `${venvPath}/bin/yt-dlp --dump-json --cookies "${cookiesFile}" "${songUrl}"`;
+            const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36';
+            const metadataCommand = `${venvPath}/bin/yt-dlp --dump-json --cookies "${cookiesFile}" --user-agent "${userAgent}" --verbose "${songUrl}"`;
             console.log(`[Video] Fetching metadata for URL: ${songUrl}, cacheBuster: ${cacheBuster}`);
             console.log(`[Video] Running command: ${metadataCommand}`);
             const { stdout: metadataStdout, stderr: metadataStderr } = await execPromise(metadataCommand);
@@ -238,7 +241,8 @@ app.get('/download/video', async (req, res) => {
         let availableFormats;
         try {
             const venvPath = path.join(__dirname, 'venv');
-            const formatsCommand = `${venvPath}/bin/yt-dlp --list-formats --cookies "${cookiesFile}" "${songUrl}"`;
+            const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36';
+            const formatsCommand = `${venvPath}/bin/yt-dlp --list-formats --cookies "${cookiesFile}" --user-agent "${userAgent}" --verbose "${songUrl}"`;
             console.log(`[Video] Fetching available formats: ${formatsCommand}`);
             const { stdout: formatsStdout, stderr: formatsStderr } = await execPromise(formatsCommand);
             if (formatsStderr) {
@@ -279,7 +283,7 @@ app.get('/download/video', async (req, res) => {
         for (const formatCode of formatCodes) {
             try {
                 const venvPath = path.join(__dirname, 'venv');
-                const ytDlpCommand = `${venvPath}/bin/yt-dlp --user-agent "${userAgent}" -f "${formatCode}" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${songUrl}"`;
+                const ytDlpCommand = `${venvPath}/bin/yt-dlp --user-agent "${userAgent}" -f "${formatCode}" --merge-output-format mp4 --cookies "${cookiesFile}" --verbose -o "${outputFile}" "${songUrl}"`;
                 console.log(`[Video] Running yt-dlp command with format ${formatCode}: ${ytDlpCommand}`);
                 const result = await execPromise(ytDlpCommand);
                 stdout = result.stdout;
@@ -368,21 +372,34 @@ app.get('/download/video', async (req, res) => {
     }
 });
 
-// Debug endpoint to check dependencies
+// Debug endpoint to check dependencies and test URL
 app.get('/debug', async (req, res) => {
     try {
         const venvPath = path.join(__dirname, 'venv');
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36';
+        const cookiesFile = path.join(__dirname, 'cookies.txt');
+        const testUrl = req.query.testUrl || 'https://youtube.com/watch?v=dQw4w9WgXcQ'; // Default test URL
         const { stdout: ytDlpPath } = await execPromise(`which ${venvPath}/bin/yt-dlp`);
         const { stdout: ytDlpVer } = await execPromise(`${venvPath}/bin/yt-dlp --version`);
         const { stdout: ffmpegPath } = await execPromise('which ffmpeg');
         const { stdout: ffmpegVer } = await execPromise('ffmpeg -version');
         const { stdout: pythonVer } = await execPromise('python3 --version');
+        let testResult = {};
+        try {
+            const testCommand = `${venvPath}/bin/yt-dlp --dump-json --cookies "${cookiesFile}" --user-agent "${userAgent}" --verbose "${testUrl}"`;
+            console.log(`[Debug] Testing URL: ${testCommand}`);
+            const { stdout: testStdout, stderr: testStderr } = await execPromise(testCommand);
+            testResult = { stdout: testStdout, stderr: testStderr };
+        } catch (err) {
+            testResult = { error: err.message, stdout: err.stdout || 'No stdout', stderr: err.stderr || 'No stderr' };
+        }
         res.json({
             ytDlpPath: ytDlpPath.trim(),
             ytDlpVersion: ytDlpVer.trim(),
             ffmpegPath: ffmpegPath.trim(),
             ffmpegVersion: ffmpegVer.split('\n')[0],
-            pythonVersion: pythonVer.trim()
+            pythonVersion: pythonVer.trim(),
+            testUrlResult: testResult
         });
     } catch (err) {
         res.status(500).json({ error: 'Debug failed', details: err.message });
