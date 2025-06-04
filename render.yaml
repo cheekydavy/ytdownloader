@@ -1,0 +1,18 @@
+```yaml
+services:
+  - type: web
+    name: youtube-downloader
+    env: node
+    buildCommand: |
+      apt-get update && apt-get install -y python3 python3-pip ffmpeg
+      pip3 install -r requirements.txt
+      npm install
+    startCommand: "node server.js"
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x
+      - key: PATH
+        value: /usr/local/bin:/usr/bin:/bin
+      - key: PYTHONPATH
+        value: /usr/local/lib/python3/dist-packages:/usr/lib/python3/dist-packages
+```
