@@ -14,7 +14,7 @@ exports.handler = async (event, context) => {
     const { song, quality, cb } = queryStringParameters || {};
     const cacheBuster = cb || Date.now();
     const tempDir = '/tmp'; // Use the writable /tmp directory
-    const ytDlpPath = '/opt/buildhome/python3/bin/yt-dlp'; // Adjust based on build environment
+    const ytDlpPath = 'yt-dlp'; // Assume yt-dlp is in PATH after build
 
     // Create a temporary cookies file from environment variable
     const cookiesContent = process.env.YOUTUBE_COOKIES;
@@ -40,8 +40,8 @@ exports.handler = async (event, context) => {
 
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0';
 
+    let outputFile = null; // Initialize to null
     try {
-        let outputFile = null; // Initialize to null
         let videoInfo, videoTitle, durationSeconds;
 
         // Fetch metadata
@@ -110,7 +110,9 @@ exports.handler = async (event, context) => {
                         break;
                     }
                 } catch (err) {
-                    fs.unlinkSync(outputFile).catch(() => {});
+                    if (outputFile && fs.existsSync(outputFile)) {
+                        fs.unlinkSync(outputFile);
+                    }
                 }
             }
 
@@ -140,10 +142,14 @@ exports.handler = async (event, context) => {
             };
         }
     } catch (error) {
+        // Safely clean up outputFile if it exists
         if (outputFile && fs.existsSync(outputFile)) {
             fs.unlinkSync(outputFile);
         }
-        fs.unlinkSync(cookiesFile); // Clean up
+        // Clean up cookiesFile
+        if (fs.existsSync(cookiesFile)) {
+            fs.unlinkSync(cookiesFile);
+        }
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Download failed.', details: error.message }),
