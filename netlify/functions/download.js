@@ -14,7 +14,7 @@ exports.handler = async (event, context) => {
     const { song, quality, cb } = queryStringParameters || {};
     const cacheBuster = cb || Date.now();
     const tempDir = '/tmp'; // Use the writable /tmp directory
-    const ytDlpPath = 'yt-dlp'; // Assume yt-dlp is in PATH after build
+    const ytDlpPath = '/opt/buildhome/.local/bin/yt-dlp'; // Adjust to the actual path after pip install
 
     // Create a temporary cookies file from environment variable
     const cookiesContent = process.env.YOUTUBE_COOKIES;
