@@ -13,7 +13,7 @@ exports.handler = async (event, context) => {
     const { path: endpoint, queryStringParameters } = event;
     const { song, quality, cb } = queryStringParameters || {};
     const cacheBuster = cb || Date.now();
-    const tempDir = path.join(__dirname, '..', '..', 'temp');
+    const tempDir = '/tmp'; // Use the writable /tmp directory
     const ytDlpPath = '/opt/buildhome/python3/bin/yt-dlp'; // Adjust based on build environment
 
     // Create a temporary cookies file from environment variable
@@ -26,7 +26,7 @@ exports.handler = async (event, context) => {
     }
     const cookiesFile = path.join(tempDir, 'temp_cookies.txt');
     if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir);
+        fs.mkdirSync(tempDir, { recursive: true }); // Should already exist, but just in case
     }
     fs.writeFileSync(cookiesFile, cookiesContent);
 
