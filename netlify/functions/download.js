@@ -41,7 +41,8 @@ exports.handler = async (event, context) => {
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0';
 
     try {
-        let outputFile, videoInfo, videoTitle, durationSeconds;
+        let outputFile = null; // Initialize to null
+        let videoInfo, videoTitle, durationSeconds;
 
         // Fetch metadata
         const metadataCommand = `${ytDlpPath} --dump-json --cookies "${cookiesFile}" --user-agent "${userAgent}" "${song}"`;
