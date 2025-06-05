@@ -1,16 +1,9 @@
 [build]
 functions = "netlify/functions"
-command = "pip install yt-dlp && npm install" 
+command = "pip install yt-dlp && npm install"
 
 [functions]
 node_bundler = "esbuild"
 
 [[plugins]]
-package = "@netlify/plugin-functions-install-core-pack"
-
-[[plugins]]
 package = "netlify-plugin-ffmpeg"
-
-# Add plugin to ensure Python runtime
-[[plugins]]
-package = "@netlify/plugin-python"
