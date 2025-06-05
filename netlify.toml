@@ -4,6 +4,3 @@ command = "pip install yt-dlp && npm install"
 
 [functions]
 node_bundler = "esbuild"
-
-[[plugins]]
-package = "netlify-plugin-ffmpeg"
