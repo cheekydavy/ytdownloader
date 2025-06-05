@@ -14,7 +14,7 @@ exports.handler = async (event, context) => {
     const { song, quality, cb } = queryStringParameters || {};
     const cacheBuster = cb || Date.now();
     const tempDir = '/tmp'; // Use the writable /tmp directory
-    const ytDlpPath = '/opt/buildhome/.local/bin/yt-dlp'; // Adjust to the actual path after pip install
+    const ytDlpPath = '/opt/buildhome/.local/share/mise/installs/python/3.13.3/bin/yt-dlp'; // Path from build logs
 
     // Create a temporary cookies file from environment variable
     const cookiesContent = process.env.YOUTUBE_COOKIES;
@@ -43,6 +43,12 @@ exports.handler = async (event, context) => {
     let outputFile = null; // Initialize to null
     try {
         let videoInfo, videoTitle, durationSeconds;
+
+        // Check if yt-dlp is available
+        const ytDlpCheck = await execPromise(`test -f ${ytDlpPath} && echo "found" || echo "not found"`);
+        if (ytDlpCheck.stdout.trim() !== 'found') {
+            throw new Error(`yt-dlp not found at ${ytDlpPath}`);
+        }
 
         // Fetch metadata
         const metadataCommand = `${ytDlpPath} --dump-json --cookies "${cookiesFile}" --user-agent "${userAgent}" "${song}"`;
