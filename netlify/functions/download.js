@@ -1,6 +1,6 @@
 const { exec } = require('child_process');
 const { promisify } = require('util');
-const fs = require('fs').promises;
+const fs = require('fs'); // Import the full fs module
 const path = require('path');
 
 const execPromise = promisify(exec);
@@ -32,7 +32,7 @@ exports.handler = async (event, context) => {
     }
 
     if (!fs.existsSync(tempDir)) {
-        await fs.mkdir(tempDir);
+        await fs.promises.mkdir(tempDir);
     }
 
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0';
@@ -62,12 +62,12 @@ exports.handler = async (event, context) => {
             const ytDlpCommand = `${ytDlpPath} -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" --user-agent "${userAgent}" -o "${outputFile}" "${song}"`;
             await execPromise(ytDlpCommand);
 
-            if (!await fs.stat(outputFile)) {
+            if (!await fs.promises.stat(outputFile)) {
                 throw new Error('Failed to download the audio.');
             }
 
-            const fileStream = await fs.readFile(outputFile);
-            await fs.unlink(outputFile);
+            const fileStream = await fs.promises.readFile(outputFile);
+            await fs.promises.unlink(outputFile);
 
             return {
                 statusCode: 200,
@@ -99,12 +99,12 @@ exports.handler = async (event, context) => {
                     const ytDlpCommand = `${ytDlpPath} --user-agent "${userAgent}" -f "${formatCode}" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${song}"`;
                     await execPromise(ytDlpCommand);
 
-                    if (await fs.stat(outputFile)) {
+                    if (await fs.promises.stat(outputFile)) {
                         formatWorked = true;
                         break;
                     }
                 } catch (err) {
-                    await fs.unlink(outputFile).catch(() => {});
+                    await fs.promises.unlink(outputFile).catch(() => {});
                 }
             }
 
@@ -112,8 +112,8 @@ exports.handler = async (event, context) => {
                 throw new Error('Failed to download the video with any format.');
             }
 
-            const fileStream = await fs.readFile(outputFile);
-            await fs.unlink(outputFile);
+            const fileStream = await fs.promises.readFile(outputFile);
+            await fs.promises.unlink(outputFile);
 
             return {
                 statusCode: 200,
@@ -131,8 +131,8 @@ exports.handler = async (event, context) => {
             };
         }
     } catch (error) {
-        if (outputFile && await fs.stat(outputFile).catch(() => false)) {
-            await fs.unlink(outputFile);
+        if (outputFile && await fs.promises.stat(outputFile).catch(() => false)) {
+            await fs.promises.unlink(outputFile);
         }
         return {
             statusCode: 500,
