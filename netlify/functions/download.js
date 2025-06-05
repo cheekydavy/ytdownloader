@@ -1,6 +1,6 @@
 const { exec } = require('child_process');
 const { promisify } = require('util');
-const fs = require('fs'); // Import the full fs module
+const fs = require('fs');
 const path = require('path');
 
 const execPromise = promisify(exec);
@@ -13,26 +13,29 @@ exports.handler = async (event, context) => {
     const { path: endpoint, queryStringParameters } = event;
     const { song, quality, cb } = queryStringParameters || {};
     const cacheBuster = cb || Date.now();
-    const cookiesFile = path.join(__dirname, '..', '..', 'cookies.txt');
     const tempDir = path.join(__dirname, '..', '..', 'temp');
     const ytDlpPath = '/opt/buildhome/python3/bin/yt-dlp'; // Adjust based on build environment
 
-    if (!fs.existsSync(cookiesFile)) {
+    // Create a temporary cookies file from environment variable
+    const cookiesContent = process.env.YOUTUBE_COOKIES;
+    if (!cookiesContent) {
         return {
             statusCode: 500,
-            body: JSON.stringify({ error: 'Cookies file missing, can’t authenticate with YouTube.' }),
+            body: JSON.stringify({ error: 'YouTube cookies not set in environment variables.' }),
         };
     }
+    const cookiesFile = path.join(tempDir, 'temp_cookies.txt');
+    if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir);
+    }
+    fs.writeFileSync(cookiesFile, cookiesContent);
 
     if (!song || !isValidYouTubeUrl(song)) {
+        fs.unlinkSync(cookiesFile); // Clean up
         return {
             statusCode: 400,
             body: JSON.stringify({ error: 'Please provide a valid YouTube URL.' }),
         };
-    }
-
-    if (!fs.existsSync(tempDir)) {
-        await fs.promises.mkdir(tempDir);
     }
 
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0';
@@ -48,6 +51,7 @@ exports.handler = async (event, context) => {
         durationSeconds = videoInfo.duration;
 
         if (durationSeconds > 7200) {
+            fs.unlinkSync(cookiesFile); // Clean up
             return {
                 statusCode: 400,
                 body: JSON.stringify({ error: 'This video is too long (max 2 hours).' }),
@@ -62,12 +66,13 @@ exports.handler = async (event, context) => {
             const ytDlpCommand = `${ytDlpPath} -x --audio-format mp3 --audio-quality ${audioQuality} --cookies "${cookiesFile}" --user-agent "${userAgent}" -o "${outputFile}" "${song}"`;
             await execPromise(ytDlpCommand);
 
-            if (!await fs.promises.stat(outputFile)) {
+            if (!fs.existsSync(outputFile)) {
                 throw new Error('Failed to download the audio.');
             }
 
-            const fileStream = await fs.promises.readFile(outputFile);
-            await fs.promises.unlink(outputFile);
+            const fileStream = fs.readFileSync(outputFile);
+            fs.unlinkSync(outputFile);
+            fs.unlinkSync(cookiesFile); // Clean up
 
             return {
                 statusCode: 200,
@@ -99,21 +104,23 @@ exports.handler = async (event, context) => {
                     const ytDlpCommand = `${ytDlpPath} --user-agent "${userAgent}" -f "${formatCode}" --merge-output-format mp4 --cookies "${cookiesFile}" -o "${outputFile}" "${song}"`;
                     await execPromise(ytDlpCommand);
 
-                    if (await fs.promises.stat(outputFile)) {
+                    if (fs.existsSync(outputFile)) {
                         formatWorked = true;
                         break;
                     }
                 } catch (err) {
-                    await fs.promises.unlink(outputFile).catch(() => {});
+                    fs.unlinkSync(outputFile).catch(() => {});
                 }
             }
 
             if (!formatWorked) {
+                fs.unlinkSync(cookiesFile); // Clean up
                 throw new Error('Failed to download the video with any format.');
             }
 
-            const fileStream = await fs.promises.readFile(outputFile);
-            await fs.promises.unlink(outputFile);
+            const fileStream = fs.readFileSync(outputFile);
+            fs.unlinkSync(outputFile);
+            fs.unlinkSync(cookiesFile); // Clean up
 
             return {
                 statusCode: 200,
@@ -125,15 +132,17 @@ exports.handler = async (event, context) => {
                 isBase64Encoded: true,
             };
         } else {
+            fs.unlinkSync(cookiesFile); // Clean up
             return {
                 statusCode: 404,
                 body: JSON.stringify({ error: 'Endpoint not found.' }),
             };
         }
     } catch (error) {
-        if (outputFile && await fs.promises.stat(outputFile).catch(() => false)) {
-            await fs.promises.unlink(outputFile);
+        if (outputFile && fs.existsSync(outputFile)) {
+            fs.unlinkSync(outputFile);
         }
+        fs.unlinkSync(cookiesFile); // Clean up
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Download failed.', details: error.message }),
