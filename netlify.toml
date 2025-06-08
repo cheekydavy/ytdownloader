@@ -1,6 +1,0 @@
-[build]
-functions = "netlify/functions"
-command = "pip install yt-dlp && npm install"
-
-[functions]
-node_bundler = "esbuild"
