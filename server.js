@@ -29,7 +29,7 @@ const isValidYouTubeUrl = (url) => {
     return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|shorts\/|embed\/)?[A-Za-z0-9_-]{11}(\?.*)?$/.test(url);
 };
 
-// Download audio endpoint (unchanged)
+// Download audio endpoint
 app.get('/download/audio', async (req, res) => {
     const songUrl = req.query.song;
     const quality = req.query.quality;
@@ -65,15 +65,8 @@ app.get('/download/audio', async (req, res) => {
         const videoInfo = JSON.parse(metadataStdout);
 
         const videoTitle = videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_');
-        const durationSeconds = videoInfo.duration;
 
-        console.log(`[Audio] Video title: ${videoInfo.title}, duration: ${durationSeconds}s, quality: ${audioQuality}`);
-
-        // Validate video duration (max 2 hours)
-        if (durationSeconds > 7200) {
-            console.error(`[Audio] Video duration (${durationSeconds} seconds) exceeds the 2-hour limit.`);
-            return res.status(400).json({ error: 'This video is too long (max 2 hours).' });
-        }
+        console.log(`[Audio] Video title: ${videoInfo.title}, quality: ${audioQuality}`);
 
         // Create a temp directory for the file
         const tempDir = path.join(__dirname, 'temp');
@@ -123,7 +116,7 @@ app.get('/download/audio', async (req, res) => {
     }
 });
 
-// Download video endpoint (updated)
+// Download video endpoint
 app.get('/download/video', async (req, res) => {
     const songUrl = req.query.song;
     const quality = req.query.quality;
@@ -176,15 +169,8 @@ app.get('/download/video', async (req, res) => {
         }
 
         const videoTitle = videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_');
-        const durationSeconds = videoInfo.duration;
 
-        console.log(`[Video] Video title: ${videoInfo.title}, duration: ${durationSeconds}s, requested quality: ${videoQuality}`);
-
-        // Validate video duration (max 2 hours)
-        if (durationSeconds > 7200) {
-            console.error(`[Video] Video duration (${durationSeconds} seconds) exceeds the 2-hour limit.`);
-            return res.status(400).json({ error: 'This video is too long (max 2 hours).' });
-        }
+        console.log(`[Video] Video title: ${videoInfo.title}, requested quality: ${videoQuality}`);
 
         // Create a temp directory for the file
         const tempDir = path.join(__dirname, 'temp');
@@ -250,23 +236,6 @@ app.get('/download/video', async (req, res) => {
                     continue;
                 }
 
-                const fileStats = fs.statSync(outputFile);
-                const fileSize = fileStats.size;
-                console.log(`[Video] Downloaded file size with format ${formatCode}: ${fileSize} bytes`);
-
-                // Rough duration check
-                const roughBitrate = 1000000; // 1 Mbps for video + audio
-                const estimatedDuration = Math.floor((fileSize * 8) / roughBitrate);
-                console.log(`[Video] Estimated duration with format ${formatCode}: ${estimatedDuration}s (expected: ${durationSeconds}s)`);
-                const durationTolerance = 30;
-                if (Math.abs(durationSeconds - estimatedDuration) > durationTolerance) {
-                    console.error(`[Video] Duration mismatch with format ${formatCode}, trying next format.`);
-                    if (fs.existsSync(outputFile)) {
-                        fs.unlinkSync(outputFile);
-                    }
-                    continue;
-                }
-
                 formatWorked = true;
                 usedFormatCode = formatCode;
                 break;
@@ -304,7 +273,9 @@ app.get('/download/video', async (req, res) => {
             }
         });
 
-        fileStream.on('error', (err) => {
+        fileStream
+
+.on('error', (err) => {
             console.error('[Video] Error streaming file to client: ' + err.message);
             if (fs.existsSync(outputFile)) {
                 fs.unlinkSync(outputFile);
