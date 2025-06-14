@@ -1,15 +1,15 @@
-# Use a base image with Node.js and Debian
+# Use a base image with Node.js and Debian Bullseye (includes Python 3.9)
 FROM node:18-bullseye
 
-# Install Python, pip, and FFmpeg
-RUN apt-get update && apt-get install -y python3 python3-pip ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install Python 3, pip, and FFmpeg
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
-
-# Copy package.json and install Node.js dependencies
-COPY package.json .
-RUN npm install
 
 # Copy requirements.txt and install Python dependencies
 COPY requirements.txt .
@@ -18,8 +18,8 @@ RUN pip3 install -r requirements.txt
 # Copy the rest of the application files
 COPY . .
 
-# Expose the port
-EXPOSE 3000
+# Expose the Flask app port
+EXPOSE 5000
 
-# Run the app
-CMD ["node", "server.js"]
+# Run the app using Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "360", "app:app"]
