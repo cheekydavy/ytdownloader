@@ -21,12 +21,16 @@ def download():
         logger.error(f"Invalid Instagram URL: {url}")
         return Response('URL must be from instagram.com', status=400)
 
+    # Path to cookies file (assumed to be in project root)
+    cookies_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'instagram.txt'))
+
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
         'format': 'best',
         'merge_output_format': 'mp4',
         'no_cache_dir': True,
         'quiet': True,
+        'cookiefile': cookies_path,  # Include cookies
     }
 
     try:
