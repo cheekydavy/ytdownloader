@@ -1,5 +1,5 @@
 Flask==2.3.3
 Flask-Limiter==3.10.1
-yt-dlp==2025.6.9
+yt-dlp==2025.06.30
 gunicorn==23.0.0
 requests==2.31.0
