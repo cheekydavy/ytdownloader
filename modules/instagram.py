@@ -1,14 +1,40 @@
-from flask import Blueprint, request, send_file, Response
+from flask import Blueprint, request, send_file, Response, redirect
 import yt_dlp
 import os
 import tempfile
 import logging
+from playwright.sync_api import sync_playwright
 
 instagram_routes = Blueprint('instagram', __name__)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def get_saveinsta_download_url(ig_url):
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto("https://saveinsta.to", timeout=60000)
+
+            # Fill the IG URL in the input box
+            page.fill("input[name='url']", ig_url)
+
+            # Click the submit/download button (adjust selector if needed)
+            page.click("button[type='submit']")
+
+            # Wait for the download link to appear (adjust selector as needed)
+            page.wait_for_selector("a[href^='https://dl.snapcdn.app']", timeout=60000)
+
+            # Extract the download URL
+            download_url = page.get_attribute("a[href^='https://dl.snapcdn.app']", "href")
+
+            browser.close()
+            return download_url
+    except Exception as e:
+        logger.error(f"Fallback Playwright error: {str(e)}")
+        return None
 
 @instagram_routes.route('/download/iglink')
 def download():
@@ -45,5 +71,11 @@ def download():
                     mimetype='video/mp4'
                 )
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        return Response(f'Error: {str(e)}', status=500)
+        logger.error(f"yt-dlp failed: {str(e)}. Using fallback Playwright.")
+
+        fallback_url = get_saveinsta_download_url(url)
+        if fallback_url:
+            logger.info(f"Redirecting to fallback download URL: {fallback_url}")
+            return redirect(fallback_url)
+        else:
+            return Response('Error: Could not retrieve fallback download URL.', status=500)
