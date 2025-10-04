@@ -49,17 +49,22 @@ def download_with_instaloader(url, tmpdir):
             logger.info("Successfully logged in to Instagram via instaloader.")
         except Exception as login_error:
             logger.warning(f"Instaloader login failed: {str(login_error)}. Proceeding without login.")
+            # Extract challenge URL from error if present
+            if "challenge/" in str(login_error):
+                challenge_match = re.search(r'https://www\.instagram\.com/challenge/[^ \]]+', str(login_error))
+                if challenge_match:
+                    logger.info(f"Instagram checkpoint challenge: {challenge_match.group(0)}")
     
-    # Retry on 401 with short delay
-    max_retries = 2
+    # Retry on 401 with short delay (reduced to avoid Heroku timeout)
+    max_retries = 1
     for attempt in range(max_retries + 1):
         try:
             post = instaloader.Post.from_shortcode(L.context, shortcode)
             break
         except Exception as e:
             if "401 Unauthorized" in str(e) and attempt < max_retries:
-                logger.warning(f"401 on attempt {attempt + 1}, waiting 10s...")
-                time.sleep(10)
+                logger.warning(f"401 on attempt {attempt + 1}, waiting 5s...")
+                time.sleep(5)
             else:
                 raise e
     
@@ -68,7 +73,7 @@ def download_with_instaloader(url, tmpdir):
     
     L.download_post(post, target=tmpdir)
     
-    # Debug: Log contents of tmpdir
+    # Debug: Log contents of tmpdir (remove after testing)
     logger.info(f"Files in {tmpdir}: {os.listdir(tmpdir)}")
     for root, dirs, files in os.walk(tmpdir):
         logger.info(f"Subdir {root}: files {files}")
@@ -98,19 +103,30 @@ def get_saveinsta_download_url(ig_url):
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 executable_path=chrome_path,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu"],
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
                 headless=True
             )
             page = browser.new_page()
-            page.goto("https://saveinsta.to", timeout=60000)
+            page.set_default_timeout(60000)  # Increase default timeout
+            page.goto("https://saveinsta.to", wait_until="networkidle", timeout=60000)
 
-            # Fill the IG URL in the input box
-            page.fill("input[name='url']", ig_url)
+            # Wait for the page to load fully
+            page.wait_for_load_state("networkidle")
 
-            # Click the submit/download button (adjust selector if needed)
-            page.click("button[type='submit']")
+            # Updated selector: assuming it's a textarea for URL input (common for such sites)
+            # If placeholder is known, use page.get_by_placeholder("Paste your link")
+            url_input = page.locator("textarea").first  # Or "input[type='url']" if input
+            url_input.wait_for(state="visible", timeout=30000)
+            url_input.fill(ig_url, timeout=30000)
 
-            # Wait for the download link to appear (adjust selector as needed)
+            # Updated button selector: look for download/submit button
+            download_button = page.locator("button:has-text('Download')").first  # Or "button[type='submit']"
+            if not download_button.is_visible(timeout=5000):
+                download_button = page.locator("button[type='submit']").first
+            download_button.click(timeout=30000)
+
+            # Wait for processing and download link
+            page.wait_for_load_state("networkidle", timeout=60000)
             page.wait_for_selector("a[href^='https://dl.snapcdn.app']", timeout=60000)
 
             # Extract the download URL
