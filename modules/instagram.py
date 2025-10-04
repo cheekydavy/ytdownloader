@@ -5,6 +5,8 @@ import tempfile
 import logging
 import re
 import glob
+import shutil
+import time
 from playwright.sync_api import sync_playwright
 import instaloader
 
@@ -48,12 +50,28 @@ def download_with_instaloader(url, tmpdir):
         except Exception as login_error:
             logger.warning(f"Instaloader login failed: {str(login_error)}. Proceeding without login.")
     
-    post = instaloader.Post.from_shortcode(L.context, shortcode)
+    # Retry on 401 with short delay
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            break
+        except Exception as e:
+            if "401 Unauthorized" in str(e) and attempt < max_retries:
+                logger.warning(f"401 on attempt {attempt + 1}, waiting 10s...")
+                time.sleep(10)
+            else:
+                raise e
     
     if not post.is_video:
         raise ValueError("Post is not a video")
     
     L.download_post(post, target=tmpdir)
+    
+    # Debug: Log contents of tmpdir
+    logger.info(f"Files in {tmpdir}: {os.listdir(tmpdir)}")
+    for root, dirs, files in os.walk(tmpdir):
+        logger.info(f"Subdir {root}: files {files}")
     
     # Find the MP4 file more robustly
     video_files = []
@@ -72,8 +90,17 @@ def download_with_instaloader(url, tmpdir):
 
 def get_saveinsta_download_url(ig_url):
     try:
+        chrome_path = shutil.which("chrome")
+        if not chrome_path:
+            raise FileNotFoundError("Chrome executable not found in PATH")
+        logger.info(f"Using Chrome at: {chrome_path}")
+        
         with sync_playwright() as p:
-            browser = p.chromium.launch(channel="chrome", headless=True)
+            browser = p.chromium.launch(
+                executable_path=chrome_path,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu"],
+                headless=True
+            )
             page = browser.new_page()
             page.goto("https://saveinsta.to", timeout=60000)
 
