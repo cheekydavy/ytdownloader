@@ -73,7 +73,7 @@ def download_with_instaloader(url, tmpdir):
 def get_saveinsta_download_url(ig_url):
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(channel="chrome", headless=True)
             page = browser.new_page()
             page.goto("https://saveinsta.to", timeout=60000)
 
