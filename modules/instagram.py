@@ -3,13 +3,55 @@ import yt_dlp
 import os
 import tempfile
 import logging
+import re
+import glob
 from playwright.sync_api import sync_playwright
+import instaloader
 
 instagram_routes = Blueprint('instagram', __name__)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def get_shortcode(url):
+    """Extract Instagram shortcode from URL."""
+    patterns = [
+        r'/p/([A-Za-z0-9_-]+)',
+        r'/reel/([A-Za-z0-9_-]+)'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+def download_with_instaloader(url, tmpdir):
+    """Download using instaloader."""
+    shortcode = get_shortcode(url)
+    if not shortcode:
+        raise ValueError("Invalid Instagram URL: could not extract shortcode")
+
+    L = instaloader.Instaloader(
+        download_video_thumbnails=False,
+        compress_json=False,
+        post_metadata_txt_pattern=''
+    )
+    post = instaloader.Post.from_shortcode(L.context, shortcode)
+    
+    if not post.is_video:
+        raise ValueError("Post is not a video")
+    
+    L.download_post(post, target=tmpdir)
+    
+    # Find the MP4 file
+    video_files = glob.glob(os.path.join(tmpdir, '**', '*.mp4'), recursive=True)
+    if not video_files:
+        raise FileNotFoundError("No video file found after download")
+    
+    filename = video_files[0]
+    title = (post.caption or f"instagram_{post.shortcode}").replace('/', '_').replace('\\', '_')[:100]
+    return filename, f"{title}.mp4"
 
 def get_saveinsta_download_url(ig_url):
     try:
@@ -55,6 +97,20 @@ def download():
         'quiet': True,
     }
 
+    # Try instaloader first
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            filename, download_name = download_with_instaloader(url, tmpdir)
+            return send_file(
+                filename,
+                as_attachment=True,
+                download_name=download_name,
+                mimetype='video/mp4'
+            )
+    except Exception as e:
+        logger.error(f"Instaloader failed: {str(e)}. Trying yt-dlp fallback.")
+
+    # Fallback to yt-dlp
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             ydl_opts['outtmpl'] = f'{tmpdir}/%(id)s.%(ext)s'
@@ -63,7 +119,7 @@ def download():
                 filename = ydl.prepare_filename(info)
                 if not os.path.exists(filename):
                     logger.error(f"File not found: {filename}")
-                    return Response('Error: Video file not found', status=500)
+                    raise FileNotFoundError('Video file not found')
                 return send_file(
                     filename,
                     as_attachment=True,
@@ -71,7 +127,7 @@ def download():
                     mimetype='video/mp4'
                 )
     except Exception as e:
-        logger.error(f"yt-dlp failed: {str(e)}. Using fallback Playwright.")
+        logger.error(f"yt-dlp failed: {str(e)}. Using saveinsta fallback.")
 
         fallback_url = get_saveinsta_download_url(url)
         if fallback_url:
