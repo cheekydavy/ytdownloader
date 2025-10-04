@@ -37,6 +37,17 @@ def download_with_instaloader(url, tmpdir):
         compress_json=False,
         post_metadata_txt_pattern=''
     )
+    
+    # Add login if credentials provided via environment variables
+    username = os.environ.get('INSTAGRAM_USERNAME')
+    password = os.environ.get('INSTAGRAM_PASSWORD')
+    if username and password:
+        try:
+            L.login(username, password)
+            logger.info("Successfully logged in to Instagram via instaloader.")
+        except Exception as login_error:
+            logger.warning(f"Instaloader login failed: {str(login_error)}. Proceeding without login.")
+    
     post = instaloader.Post.from_shortcode(L.context, shortcode)
     
     if not post.is_video:
@@ -44,12 +55,18 @@ def download_with_instaloader(url, tmpdir):
     
     L.download_post(post, target=tmpdir)
     
-    # Find the MP4 file
-    video_files = glob.glob(os.path.join(tmpdir, '**', '*.mp4'), recursive=True)
+    # Find the MP4 file more robustly
+    video_files = []
+    for root, dirs, files in os.walk(tmpdir):
+        for file in files:
+            if file.endswith('.mp4'):
+                video_files.append(os.path.join(root, file))
+    
     if not video_files:
         raise FileNotFoundError("No video file found after download")
     
-    filename = video_files[0]
+    # Use the most recent MP4 file
+    filename = max(video_files, key=os.path.getctime)
     title = (post.caption or f"instagram_{post.shortcode}").replace('/', '_').replace('\\', '_')[:100]
     return filename, f"{title}.mp4"
 
@@ -97,7 +114,7 @@ def download():
         'quiet': True,
     }
 
-    # Try instaloader first
+    # Primary: instaloader (with optional login)
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             filename, download_name = download_with_instaloader(url, tmpdir)
@@ -110,7 +127,7 @@ def download():
     except Exception as e:
         logger.error(f"Instaloader failed: {str(e)}. Trying yt-dlp fallback.")
 
-    # Fallback to yt-dlp
+    # Fallback 1: yt-dlp
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             ydl_opts['outtmpl'] = f'{tmpdir}/%(id)s.%(ext)s'
@@ -129,6 +146,7 @@ def download():
     except Exception as e:
         logger.error(f"yt-dlp failed: {str(e)}. Using saveinsta fallback.")
 
+        # Fallback 2: Playwright (saveinsta)
         fallback_url = get_saveinsta_download_url(url)
         if fallback_url:
             logger.info(f"Redirecting to fallback download URL: {fallback_url}")
