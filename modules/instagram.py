@@ -3,12 +3,7 @@ import yt_dlp
 import os
 import tempfile
 import logging
-import re
-import glob
-import shutil
-import time
-from playwright.sync_api import sync_playwright
-import instaloader
+from apify_client import ApifyClient
 
 instagram_routes = Blueprint('instagram', __name__)
 
@@ -16,126 +11,37 @@ instagram_routes = Blueprint('instagram', __name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_shortcode(url):
-    """Extract Instagram shortcode from URL."""
-    patterns = [
-        r'/p/([A-Za-z0-9_-]+)',
-        r'/reel/([A-Za-z0-9_-]+)'
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
+# Initialize Apify client with your API token (set via environment variable for security)
+api_token = os.environ.get('APIFY_API_TOKEN', '<YOUR_API_TOKEN>')
+client = ApifyClient(api_token)
 
-def download_with_instaloader(url, tmpdir):
-    """Download using instaloader."""
-    shortcode = get_shortcode(url)
-    if not shortcode:
-        raise ValueError("Invalid Instagram URL: could not extract shortcode")
-
-    L = instaloader.Instaloader(
-        download_video_thumbnails=False,
-        compress_json=False,
-        post_metadata_txt_pattern=''
-    )
-    
-    # Add login if credentials provided via environment variables
-    username = os.environ.get('INSTAGRAM_USERNAME')
-    password = os.environ.get('INSTAGRAM_PASSWORD')
-    if username and password:
-        try:
-            L.login(username, password)
-            logger.info("Successfully logged in to Instagram via instaloader.")
-        except Exception as login_error:
-            logger.warning(f"Instaloader login failed: {str(login_error)}. Proceeding without login.")
-            # Extract challenge URL from error if present
-            if "challenge/" in str(login_error):
-                challenge_match = re.search(r'https://www\.instagram\.com/challenge/[^ \]]+', str(login_error))
-                if challenge_match:
-                    logger.info(f"Instagram checkpoint challenge: {challenge_match.group(0)}")
-    
-    # Retry on 401 with short delay (reduced to avoid Heroku timeout)
-    max_retries = 1
-    for attempt in range(max_retries + 1):
-        try:
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-            break
-        except Exception as e:
-            if "401 Unauthorized" in str(e) and attempt < max_retries:
-                logger.warning(f"401 on attempt {attempt + 1}, waiting 5s...")
-                time.sleep(5)
-            else:
-                raise e
-    
-    if not post.is_video:
-        raise ValueError("Post is not a video")
-    
-    L.download_post(post, target=tmpdir)
-    
-    # Debug: Log contents of tmpdir (remove after testing)
-    logger.info(f"Files in {tmpdir}: {os.listdir(tmpdir)}")
-    for root, dirs, files in os.walk(tmpdir):
-        logger.info(f"Subdir {root}: files {files}")
-    
-    # Find the MP4 file more robustly
-    video_files = []
-    for root, dirs, files in os.walk(tmpdir):
-        for file in files:
-            if file.endswith('.mp4'):
-                video_files.append(os.path.join(root, file))
-    
-    if not video_files:
-        raise FileNotFoundError("No video file found after download")
-    
-    # Use the most recent MP4 file
-    filename = max(video_files, key=os.path.getctime)
-    title = (post.caption or f"instagram_{post.shortcode}").replace('/', '_').replace('\\', '_')[:100]
-    return filename, f"{title}.mp4"
-
-def get_saveinsta_download_url(ig_url):
+def download_via_apify(ig_url):
+    """Download video using Apify Instagram Scraper."""
     try:
-        chrome_path = shutil.which("chrome")
-        if not chrome_path:
-            raise FileNotFoundError("Chrome executable not found in PATH")
-        logger.info(f"Using Chrome at: {chrome_path}")
+        run_input = {
+            "startUrls": [{"url": ig_url}],
+            "proxy": {"useApifyProxy": True},
+            "maxRequestRetries": 10,
+            "downloadVideos": True  # Ensure video URLs are included
+        }
         
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                executable_path=chrome_path,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
-                headless=True
-            )
-            page = browser.new_page()
-            page.set_default_timeout(60000)  # Increase default timeout
-            page.goto("https://saveinsta.to", wait_until="networkidle", timeout=60000)
-
-            # Wait for the page to load fully
-            page.wait_for_load_state("networkidle")
-
-            # Updated selector: assuming it's a textarea for URL input (common for such sites)
-            # If placeholder is known, use page.get_by_placeholder("Paste your link")
-            url_input = page.locator("textarea").first  # Or "input[type='url']" if input
-            url_input.wait_for(state="visible", timeout=30000)
-            url_input.fill(ig_url, timeout=30000)
-
-            # Updated button selector: look for download/submit button
-            download_button = page.locator("button:has-text('Download')").first  # Or "button[type='submit']"
-            if not download_button.is_visible(timeout=5000):
-                download_button = page.locator("button[type='submit']").first
-            download_button.click(timeout=30000)
-
-            # Wait for processing and download link
-            page.wait_for_load_state("networkidle", timeout=60000)
-            page.wait_for_selector("a[href^='https://dl.snapcdn.app']", timeout=60000)
-
-            # Extract the download URL
-            download_url = page.get_attribute("a[href^='https://dl.snapcdn.app']", "href")
-
-            browser.close()
-            return download_url
+        # Run the Actor and wait for it to finish
+        run = client.actor("l5Rb0b8v9jFW4VrWh").call(run_input=run_input)
+        dataset_id = run["defaultDatasetId"]
+        
+        # Poll for results
+        for attempt in range(10):  # Max 50s wait
+            items = client.dataset(dataset_id).iterate_items()
+            for item in items:
+                video_url = item.get("videoUrl") or item.get("media", [{}])[0].get("videoUrl")
+                if video_url:
+                    logger.info(f"Apify retrieved video URL: {video_url}")
+                    return video_url
+            time.sleep(5)  # Check every 5s
+        logger.error("Apify run timed out or no video URL found")
+        return None
     except Exception as e:
-        logger.error(f"Fallback Playwright error: {str(e)}")
+        logger.error(f"Apify failed: {str(e)}")
         return None
 
 @instagram_routes.route('/download/iglink')
@@ -157,20 +63,13 @@ def download():
         'quiet': True,
     }
 
-    # Primary: instaloader (with optional login)
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            filename, download_name = download_with_instaloader(url, tmpdir)
-            return send_file(
-                filename,
-                as_attachment=True,
-                download_name=download_name,
-                mimetype='video/mp4'
-            )
-    except Exception as e:
-        logger.error(f"Instaloader failed: {str(e)}. Trying yt-dlp fallback.")
+    # Primary: Apify
+    video_url = download_via_apify(url)
+    if video_url:
+        logger.info(f"Redirecting to Apify video URL: {video_url}")
+        return redirect(video_url)
 
-    # Fallback 1: yt-dlp
+    # Fallback: yt-dlp
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             ydl_opts['outtmpl'] = f'{tmpdir}/%(id)s.%(ext)s'
@@ -179,7 +78,7 @@ def download():
                 filename = ydl.prepare_filename(info)
                 if not os.path.exists(filename):
                     logger.error(f"File not found: {filename}")
-                    raise FileNotFoundError('Video file not found')
+                    return Response('Error: Video file not found', status=500)
                 return send_file(
                     filename,
                     as_attachment=True,
@@ -187,12 +86,5 @@ def download():
                     mimetype='video/mp4'
                 )
     except Exception as e:
-        logger.error(f"yt-dlp failed: {str(e)}. Using saveinsta fallback.")
-
-        # Fallback 2: Playwright (saveinsta)
-        fallback_url = get_saveinsta_download_url(url)
-        if fallback_url:
-            logger.info(f"Redirecting to fallback download URL: {fallback_url}")
-            return redirect(fallback_url)
-        else:
-            return Response('Error: Could not retrieve fallback download URL.', status=500)
+        logger.error(f"yt-dlp failed: {str(e)}")
+        return Response('Error: Could not retrieve video.', status=500)
