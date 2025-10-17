@@ -19,26 +19,25 @@ def download_via_apify(ig_url):
     """Download video using Apify Instagram Scraper."""
     try:
         run_input = {
-            "startUrls": [{"url": ig_url}],
-            "proxy": {"useApifyProxy": True},
-            "maxRequestRetries": 10,
-            "downloadVideos": True  # Ensure video URLs are included
+            "directUrls": [ig_url],
+            "resultsType": "posts",
+            "resultsLimit": 1,
+            "searchType": "hashtag",
+            "searchLimit": 1,
+            "addParentData": False,
         }
         
         # Run the Actor and wait for it to finish
-        run = client.actor("l5Rb0b8v9jFW4VrWh").call(run_input=run_input)
+        run = client.actor("shu8hvrXbJbY3Eb9W").call(run_input=run_input)
         dataset_id = run["defaultDatasetId"]
         
-        # Poll for results
-        for attempt in range(10):  # Max 50s wait
-            items = client.dataset(dataset_id).iterate_items()
-            for item in items:
-                video_url = item.get("videoUrl") or item.get("media", [{}])[0].get("videoUrl")
-                if video_url:
-                    logger.info(f"Apify retrieved video URL: {video_url}")
-                    return video_url
-            time.sleep(5)  # Check every 5s
-        logger.error("Apify run timed out or no video URL found")
+        # Fetch results from the run's dataset
+        for item in client.dataset(dataset_id).iterate_items():
+            video_url = item.get("videoUrl") or item.get("media", [{}])[0].get("videoUrl")
+            if video_url:
+                logger.info(f"Apify retrieved video URL: {video_url}")
+                return video_url
+        logger.error("No video URL found in Apify results")
         return None
     except Exception as e:
         logger.error(f"Apify failed: {str(e)}")
