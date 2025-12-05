@@ -15,9 +15,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt
 
-# Install Playwright Chromium browsers
-RUN python3 -m playwright install chromium
-
 # Copy the rest of the application files
 COPY . .
 
