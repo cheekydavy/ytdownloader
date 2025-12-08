@@ -47,14 +47,11 @@ def download_audio():
         metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" "{song_url}"'
         meta = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
 
-        logger.info("YT-DLP META STDOUT:\n" + meta.stdout)
-        logger.info("YT-DLP META STDERR:\n" + meta.stderr)
-
         if meta.returncode != 0 or not meta.stdout.strip():
-            return jsonify({
-                'error': 'Metadata extraction failed',
-                'details': meta.stderr.strip()
-            }), 500
+            return jsonify({'error': 'Metadata extraction failed', 'details': meta.stderr.strip()}), 500
+
+        logger.info(meta.stdout)
+        logger.info(meta.stderr)
 
         video_info = json.loads(meta.stdout)
         video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
@@ -63,7 +60,8 @@ def download_audio():
         temp_dir.mkdir(exist_ok=True)
         output_file = temp_dir / f"{video_title}_{audio_quality}_{cache_buster}.mp3"
 
-        format_expr = "bestaudio[ext=m4a]/bestaudio/best"
+        format_expr = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
+
         yt_dlp_command = (
             f'yt-dlp -x --no-warnings --ignore-errors '
             f'-f "{format_expr}" '
@@ -73,8 +71,8 @@ def download_audio():
 
         process = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
 
-        logger.info("YT-DLP AUDIO STDOUT:\n" + process.stdout)
-        logger.info("YT-DLP AUDIO STDERR:\n" + process.stderr)
+        logger.info(process.stdout)
+        logger.info(process.stderr)
 
         if process.returncode != 0:
             return jsonify({
@@ -130,8 +128,12 @@ def download_video():
             return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
 
         metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" "{song_url}"'
-        result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
-        video_info = json.loads(result.stdout)
+        meta = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
+
+        if meta.returncode != 0 or not meta.stdout.strip():
+            return jsonify({'error': 'Metadata extraction failed', 'details': meta.stderr.strip()}), 500
+
+        video_info = json.loads(meta.stdout)
 
         video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
 
@@ -142,13 +144,20 @@ def download_video():
         height = re.sub("[^0-9]", "", video_quality)
         format_expr = f"bestvideo[height<={height}]+bestaudio/best"
 
-        yt_dlp_command = f'yt-dlp -f "{format_expr}" --merge-output-format mp4 --cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
-        subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
+        yt_dlp_command = (
+            f'yt-dlp -f "{format_expr}" --merge-output-format mp4 '
+            f'--cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
+        )
+
+        proc = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
 
         if not output_file.exists():
-            fallback_expr = f"bestvideo+bestaudio/best"
-            fallback_command = f'yt-dlp -f "{fallback_expr}" --merge-output-format mp4 --cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
-            subprocess.run(fallback_command, shell=True, capture_output=True, text=True)
+            fallback_expr = "bestvideo+bestaudio/best"
+            fallback = (
+                f'yt-dlp -f "{fallback_expr}" --merge-output-format mp4 '
+                f'--cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
+            )
+            subprocess.run(fallback, shell=True, capture_output=True, text=True)
 
         if not output_file.exists():
             return jsonify({'error': 'Failed to download the video.'}), 500
