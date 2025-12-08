@@ -45,9 +45,18 @@ def download_audio():
             return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
 
         metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" "{song_url}"'
-        result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
-        video_info = json.loads(result.stdout)
+        meta = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
 
+        logger.info("YT-DLP META STDOUT:\n" + meta.stdout)
+        logger.info("YT-DLP META STDERR:\n" + meta.stderr)
+
+        if meta.returncode != 0 or not meta.stdout.strip():
+            return jsonify({
+                'error': 'Metadata extraction failed',
+                'details': meta.stderr.strip()
+            }), 500
+
+        video_info = json.loads(meta.stdout)
         video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
 
         temp_dir = Path('temp')
@@ -55,11 +64,31 @@ def download_audio():
         output_file = temp_dir / f"{video_title}_{audio_quality}_{cache_buster}.mp3"
 
         format_expr = f"ba/bestaudio/bestaudio[ext=mp3]"
-        yt_dlp_command = f'yt-dlp -x -f "{format_expr}" --audio-format mp3 --audio-quality {audio_quality} --cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
-        subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
+        yt_dlp_command = (
+            f'yt-dlp -x --no-warnings --ignore-errors '
+            f'-f "{format_expr}" '
+            f'--audio-format mp3 --audio-quality {audio_quality} '
+            f'--cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
+        )
+
+        process = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
+
+        logger.info("YT-DLP AUDIO STDOUT:\n" + process.stdout)
+        logger.info("YT-DLP AUDIO STDERR:\n" + process.stderr)
+
+        if process.returncode != 0:
+            return jsonify({
+                'error': 'yt-dlp audio failed',
+                'details': process.stderr.strip(),
+                'stdout': process.stdout.strip()
+            }), 500
 
         if not output_file.exists():
-            return jsonify({'error': 'Failed to download the audio.'}), 500
+            return jsonify({
+                'error': 'Failed to download the audio (file missing)',
+                'details': process.stderr.strip(),
+                'stdout': process.stdout.strip()
+            }), 500
 
         response = send_file(
             str(output_file),
@@ -79,8 +108,7 @@ def download_audio():
     except Exception as e:
         if output_file and output_file.exists():
             output_file.unlink()
-        return jsonify({'error': 'Failed to download the audio.', 'details': str(e)}), 500
-
+        return jsonify({'error': 'Audio download exception', 'details': str(e)}), 500
 
 @youtube_routes.route('/download/video', methods=['GET'])
 @limiter.limit("500 per 15min")
