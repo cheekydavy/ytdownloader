@@ -1,6 +1,5 @@
 from flask import Blueprint, request, jsonify, send_file, after_this_request
 import subprocess
-import os
 import re
 import json
 import logging
@@ -32,7 +31,7 @@ def download_audio():
     quality = request.args.get('quality')
     cache_buster = request.args.get('cb', str(int(time.time())))
 
-    if not song_url or not isinstance(song_url, str) or not is_valid_youtube_url(song_url):
+    if not song_url or not is_valid_youtube_url(song_url):
         return jsonify({'error': 'Please provide a valid YouTube URL.'}), 400
 
     valid_audio_qualities = ['128K', '192K', '320K']
@@ -40,66 +39,61 @@ def download_audio():
 
     output_file = None
     try:
-        cookies_file = Path('cookies.txt')
-        if not cookies_file.exists():
-            return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
+        cookies = Path('cookies.txt')
+        if not cookies.exists():
+            return jsonify({'error': 'Cookies file missing'}), 500
 
-        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" "{song_url}"'
-        meta = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
+        meta_cmd = f'yt-dlp --dump-json --cookies "{cookies}" "{song_url}"'
+        meta = subprocess.run(meta_cmd, shell=True, capture_output=True, text=True)
 
         if meta.returncode != 0 or not meta.stdout.strip():
-            return jsonify({'error': 'Metadata extraction failed', 'details': meta.stderr.strip()}), 500
+            return jsonify({'error': 'Metadata extraction failed', 'details': meta.stderr}), 500
 
         logger.info(meta.stdout)
         logger.info(meta.stderr)
 
-        video_info = json.loads(meta.stdout)
-        video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
+        info = json.loads(meta.stdout)
+        title = re.sub(r'[^a-zA-Z0-9]', '_', info['title'])
 
-        temp_dir = Path('temp')
-        temp_dir.mkdir(exist_ok=True)
-        output_file = temp_dir / f"{video_title}_{audio_quality}_{cache_buster}.mp3"
+        temp = Path('temp')
+        temp.mkdir(exist_ok=True)
+        output_file = temp / f"{title}_{audio_quality}_{cache_buster}.mp3"
 
-        format_expr = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
+        fmt = "ba[ext=m4a]/ba[ext=webm]/ba"
 
-        yt_dlp_command = (
-            f'yt-dlp -x --no-warnings --ignore-errors '
-            f'-f "{format_expr}" '
-            f'--audio-format mp3 --audio-quality {audio_quality} '
-            f'--cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
+        cmd = (
+            f'yt-dlp -x '
+            f'--no-warnings --ignore-errors '
+            f'-f "{fmt}" '
+            f'--audio-format mp3 '
+            f'--audio-quality {audio_quality} '
+            f'--cookies "{cookies}" '
+            f'-o "{output_file}" "{song_url}"'
         )
 
-        process = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
-        logger.info(process.stdout)
-        logger.info(process.stderr)
+        logger.info(proc.stdout)
+        logger.info(proc.stderr)
 
-        if process.returncode != 0:
-            return jsonify({
-                'error': 'yt-dlp audio failed',
-                'details': process.stderr.strip(),
-                'stdout': process.stdout.strip()
-            }), 500
+        if proc.returncode != 0:
+            return jsonify({'error': 'yt-dlp audio failed', 'details': proc.stderr, 'stdout': proc.stdout}), 500
 
         if not output_file.exists():
-            return jsonify({
-                'error': 'Failed to download the audio (file missing)',
-                'details': process.stderr.strip(),
-                'stdout': process.stdout.strip()
-            }), 500
+            return jsonify({'error': 'Audio file missing', 'details': proc.stderr}), 500
 
         response = send_file(
             str(output_file),
             as_attachment=True,
-            download_name=f"{video_title}_{audio_quality}.mp3",
+            download_name=f"{title}_{audio_quality}.mp3",
             mimetype='audio/mpeg'
         )
 
         @after_this_request
-        def cleanup(response):
+        def cleanup(resp):
             if output_file.exists():
                 output_file.unlink()
-            return response
+            return resp
 
         return response
 
@@ -115,69 +109,72 @@ def download_video():
     quality = request.args.get('quality')
     cache_buster = request.args.get('cb', str(int(time.time())))
 
-    if not song_url or not isinstance(song_url, str) or not is_valid_youtube_url(song_url):
+    if not song_url or not is_valid_youtube_url(song_url):
         return jsonify({'error': 'Please provide a valid YouTube URL.'}), 400
 
-    valid_video_qualities = ['144p', '240p', '360p', '480p', '720p', '1080p']
-    video_quality = quality if quality in valid_video_qualities else '1080p'
+    valid_q = ['144p', '240p', '360p', '480p', '720p', '1080p']
+    video_quality = quality if quality in valid_q else '1080p'
 
     output_file = None
     try:
-        cookies_file = Path('cookies.txt')
-        if not cookies_file.exists():
-            return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
+        cookies = Path('cookies.txt')
+        if not cookies.exists():
+            return jsonify({'error': 'Cookies file missing'}), 500
 
-        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" "{song_url}"'
-        meta = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
+        meta_cmd = f'yt-dlp --dump-json --cookies "{cookies}" "{song_url}"'
+        meta = subprocess.run(meta_cmd, shell=True, capture_output=True, text=True)
 
         if meta.returncode != 0 or not meta.stdout.strip():
-            return jsonify({'error': 'Metadata extraction failed', 'details': meta.stderr.strip()}), 500
+            return jsonify({'error': 'Metadata extraction failed', 'details': meta.stderr}), 500
 
-        video_info = json.loads(meta.stdout)
+        info = json.loads(meta.stdout)
+        title = re.sub(r'[^a-zA-Z0-9]', '_', info['title'])
 
-        video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
-
-        temp_dir = Path('temp')
-        temp_dir.mkdir(exist_ok=True)
-        output_file = temp_dir / f"{video_title}_{video_quality}_{cache_buster}.mp4"
+        temp = Path('temp')
+        temp.mkdir(exist_ok=True)
+        output_file = temp / f"{title}_{video_quality}_{cache_buster}.mp4"
 
         height = re.sub("[^0-9]", "", video_quality)
-        format_expr = f"bestvideo[height<={height}]+bestaudio/best"
+        fmt = f"bv*[height<={height}]+ba/b"
 
-        yt_dlp_command = (
-            f'yt-dlp -f "{format_expr}" --merge-output-format mp4 '
-            f'--cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
+        cmd = (
+            f'yt-dlp -f "{fmt}" '
+            f'--merge-output-format mp4 '
+            f'--cookies "{cookies}" '
+            f'-o "{output_file}" "{song_url}"'
         )
 
-        proc = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
         if not output_file.exists():
-            fallback_expr = "bestvideo+bestaudio/best"
-            fallback = (
-                f'yt-dlp -f "{fallback_expr}" --merge-output-format mp4 '
-                f'--cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
+            fb_fmt = "bv*+ba/b"
+            fb = (
+                f'yt-dlp -f "{fb_fmt}" '
+                f'--merge-output-format mp4 '
+                f'--cookies "{cookies}" '
+                f'-o "{output_file}" "{song_url}"'
             )
-            subprocess.run(fallback, shell=True, capture_output=True, text=True)
+            subprocess.run(fb, shell=True, capture_output=True, text=True)
 
         if not output_file.exists():
-            return jsonify({'error': 'Failed to download the video.'}), 500
+            return jsonify({'error': 'Failed to download video'}), 500
 
         response = send_file(
             str(output_file),
             as_attachment=True,
-            download_name=f"{video_title}_{video_quality}.mp4",
+            download_name=f"{title}_{video_quality}.mp4",
             mimetype='video/mp4'
         )
 
         @after_this_request
-        def cleanup(response):
+        def cleanup(resp):
             if output_file.exists():
                 output_file.unlink()
-            return response
+            return resp
 
         return response
 
     except Exception as e:
         if output_file and output_file.exists():
             output_file.unlink()
-        return jsonify({'error': 'Failed to download the video.', 'details': str(e)}), 500
+        return jsonify({'error': 'Video download exception', 'details': str(e)}), 500
