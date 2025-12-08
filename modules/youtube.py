@@ -63,7 +63,7 @@ def download_audio():
         temp_dir.mkdir(exist_ok=True)
         output_file = temp_dir / f"{video_title}_{audio_quality}_{cache_buster}.mp3"
 
-        format_expr = f"ba/bestaudio/bestaudio[ext=mp3]"
+        format_expr = "bestaudio[ext=m4a]/bestaudio/best"
         yt_dlp_command = (
             f'yt-dlp -x --no-warnings --ignore-errors '
             f'-f "{format_expr}" '
