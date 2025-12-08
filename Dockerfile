@@ -1,9 +1,13 @@
-FROM python:3.12-slim-bullseye
+FROM python:3.12-slim-bullseye 
+
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     nodejs \
     npm \
  && rm -rf /var/lib/apt/lists/*
+
+RUN pip install js2py pyduktape2 py-mini-racer
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install -r requirements.txt
