@@ -1,6 +1,6 @@
 Flask==2.3.3
 Flask-Limiter==3.10.1
-yt-dlp==2025.12.8
+yt-dlp
 gunicorn==23.0.0
 requests==2.31.0
 apify-client==1.6.0
