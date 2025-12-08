@@ -112,56 +112,15 @@ def download_video():
     valid_video_qualities = ['144p', '240p', '360p', '480p', '720p', '1080p']
     video_quality = quality if quality in valid_video_qualities else '1080p'
 
-    quality_format_map = {
-        '144p': ['160+251', '133+251', '134+251'],
-        '240p': ['133+251', '134+251', '135+251'],
-        '360p': ['18', '134+251', '135+251', '136+251'],
-        '480p': ['135+251', '136+251', '137+251'],
-        '720p': ['136+251', '137+251', '135+251'],
-        '1080p': ['137+251', '136+251', '135+251'],
-    }
-    format_codes = quality_format_map.get(video_quality, ['137+251', '136+251', '135+251'])
-
-    output_file = None
+output_file = None
     try:
-        cookies_file = Path('cookies.txt')
-        if not cookies_file.exists():
-            logger.error(f"[Video] Cookies file not found at {cookies_file}")
-            return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
-
-        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" "{song_url}"'
-        logger.info(f"[Video] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
-        result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
-        if result.stderr:
-            logger.error(f"[Video] Metadata fetch stderr: {result.stderr}")
-        video_info = json.loads(result.stdout)
-
-        video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
-        logger.info(f"[Video] Video title: {video_info['title']}, requested quality: {video_quality}")
-
-        temp_dir = Path('temp')
-        temp_dir.mkdir(exist_ok=True)
-        output_file = temp_dir / f"{video_title}_{video_quality}_{cache_buster}.mp4"
-
-        formats_command = f'yt-dlp --list-formats --cookies "{cookies_file}" "{song_url}"'
-        logger.info(f"[Video] Fetching available formats: {formats_command}")
-        result = subprocess.run(formats_command, shell=True, capture_output=True, text=True)
-        if result.stderr:
-            logger.error(f"[Video] Formats fetch stderr: {result.stderr}")
-        available_formats = result.stdout
-
-        adjusted_format_codes = [code for code in format_codes if code.split('+')[0] in available_formats]
-        if not adjusted_format_codes:
-            logger.warning(f"[Video] Requested formats {', '.join(format_codes)} not available. Falling back to default.")
-            adjusted_format_codes = ['bestvideo[height<=720]+bestaudio/best', 'bestvideo[height<=480]+bestaudio/best', 'best']
-
-        logger.info(f"[Video] Using format codes: {', '.join(adjusted_format_codes)}")
+        video_height = video_quality.strip('p') 
+        
+        format_filter = f'bestvideo[height<={video_height}]+bestaudio/best'
+        
         user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 
-        format_worked = False
-        used_format_code = None
-        for format_code in adjusted_format_codes:
-            try:
+        cookies_file = Path('cookies.txt')
                 yt_dlp_command = f'yt-dlp --user-agent "{user_agent}" -f "{format_code}" --merge-output-format mp4 --cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
                 logger.info(f"[Video] Running yt-dlp command with format {format_code}: {yt_dlp_command}")
                 result = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
@@ -169,23 +128,24 @@ def download_video():
                 logger.info(f"[Video] yt-dlp stderr: {result.stderr}")
 
                 if output_file.exists():
-                    format_worked = True
-                    used_format_code = format_code
-                    break
-                else:
-                    logger.error(f"[Video] Output file not found after yt-dlp command with format {format_code}.")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"[Video] yt-dlp command failed with format {format_code}: {e.stderr}")
+        yt_dlp_command = (
+            f'yt-dlp --user-agent "{user_agent}" '
+            f'-f "{format_filter}" '
+            '--merge-output-format mp4 '
+            f'--cookies "{cookies_file}" '
+            f'-o "{output_file}" "{song_url}"'
+        )
+        logger.info(f"[Video] Running yt-dlp command with filter {format_filter}: {yt_dlp_command}")
+        result = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
+        logger.info(f"[Video] yt-dlp stdout: {result.stdout}")
+        logger.info(f"[Video] yt-dlp stderr: {result.stderr}")
 
-        if not format_worked:
-            logger.error('[Video] All format codes failed.')
-            return jsonify({
-                'error': 'Failed to download the video with any format.',
-                'details': f"All formats ({', '.join(format_codes)}) failed. Available formats: {available_formats}"
-            }), 500
+        if not output_file.exists():
+            logger.error('[Video] Output file not found after yt-dlp command.')
+            logger.error(f"[Video] Final download attempt failed. STDERR: {result.stderr}")
+            return jsonify({'error': 'Failed to download the video. Check logs for 404 or Signature errors.'}), 500
 
-        logger.info(f"[Video] Successfully downloaded with format {used_format_code}")
-
+        logger.info(f"[Video] Successfully downloaded with filter {format_filter}")
         response = send_file(
             str(output_file),
             as_attachment=True,
