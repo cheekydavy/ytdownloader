@@ -1,5 +1,5 @@
 # Use a base image with Node.js and Debian Bullseye (includes Python 3.9)
-FROM node:18-bullseye
+FROM python:3.12-slim-bullseye
 
 # Install Python 3, pip, and FFmpeg
 RUN apt-get update && apt-get install -y \
