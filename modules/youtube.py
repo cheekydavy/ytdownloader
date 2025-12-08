@@ -112,25 +112,46 @@ def download_video():
     valid_video_qualities = ['144p', '240p', '360p', '480p', '720p', '1080p']
     video_quality = quality if quality in valid_video_qualities else '1080p'
 
-output_file = None
+    valid_video_qualities = ['144p', '240p', '360p', '480p', '720p', '1080p']
+    video_quality = quality if quality in valid_video_qualities else '1080p'
+
+    output_file = None
     try:
+        # 1. Define Filter and User Agent
         video_height = video_quality.strip('p') 
-        
         format_filter = f'bestvideo[height<={video_height}]+bestaudio/best'
-        
         user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 
         cookies_file = Path('cookies.txt')
-                yt_dlp_command = f'yt-dlp --user-agent "{user_agent}" -f "{format_code}" --merge-output-format mp4 --cookies "{cookies_file}" -o "{output_file}" "{song_url}"'
-                logger.info(f"[Video] Running yt-dlp command with format {format_code}: {yt_dlp_command}")
-                result = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
-                logger.info(f"[Video] yt-dlp stdout: {result.stdout}")
-                logger.info(f"[Video] yt-dlp stderr: {result.stderr}")
+        if not cookies_file.exists():
+            logger.error(f"[Video] Cookies file not found at {cookies_file}")
+            return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
 
-                if output_file.exists():
+        # 2. Fetch video metadata (REQUIRED to get the title and define the output path)
+        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" "{song_url}"'
+        logger.info(f"[Video] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
+        result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
+        
+        if result.stderr and "WARNING" not in result.stderr:
+             # Only log errors that are not warnings to keep things clean
+            logger.error(f"[Video] Metadata fetch stderr: {result.stderr}")
+        
+        if not result.stdout:
+            logger.error(f"[Video] Failed to retrieve video metadata. Output: {result.stderr}")
+            return jsonify({'error': 'Video metadata could not be retrieved. Video may be private or removed.'}), 500
+
+        video_info = json.loads(result.stdout)
+        video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
+        logger.info(f"[Video] Video title: {video_info['title']}, requested quality: {video_quality}")
+
+        temp_dir = Path('temp')
+        temp_dir.mkdir(exist_ok=True)
+        output_file = temp_dir / f"{video_title}_{video_quality}_{cache_buster}.mp4"
+
+        # 3. Run the robust download command
         yt_dlp_command = (
             f'yt-dlp --user-agent "{user_agent}" '
-            f'-f "{format_filter}" '
+            f'-f "{format_filter}" ' # Using the dynamic filter
             '--merge-output-format mp4 '
             f'--cookies "{cookies_file}" '
             f'-o "{output_file}" "{song_url}"'
@@ -146,6 +167,8 @@ output_file = None
             return jsonify({'error': 'Failed to download the video. Check logs for 404 or Signature errors.'}), 500
 
         logger.info(f"[Video] Successfully downloaded with filter {format_filter}")
+
+        # 4. Final response and cleanup
         response = send_file(
             str(output_file),
             as_attachment=True,
