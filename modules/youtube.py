@@ -6,17 +6,19 @@ import json
 import logging
 from pathlib import Path
 import time
-import flask_limiter 
-from flask_limiter.util import get_remote_address 
+import flask_limiter  # Added this line
+from flask_limiter.util import get_remote_address  # Added this line
 youtube_routes = Blueprint('youtube', __name__)
-
+# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-limiter = flask_limiter.Limiter
+# Rate-limit requests to avoid hitting YouTube's limits
+# Updated to use flask_limiter.Limiter
+limiter = flask_limiter.Limiter(
     key_func=get_remote_address,
     default_limits=["500 per 15min"]
 )
+# Initialize limiter with Flask app (will be set when blueprint is registered)
 def init_limiter(app):
     limiter.init_app(app)
 # Validate YouTube URL
@@ -40,7 +42,7 @@ def download_audio():
             logger.error(f"[Audio] Cookies file not found at {cookies_file}")
             return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
         # Fetch video metadata using yt-dlp
-        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes nodejs "{song_url}"'
+        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes node "{song_url}"'
         logger.info(f"[Audio] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
         result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
         if result.stderr:
@@ -51,7 +53,7 @@ def download_audio():
         temp_dir = Path('temp')
         temp_dir.mkdir(exist_ok=True)
         output_file = temp_dir / f"{video_title}_{audio_quality}_{cache_buster}.mp3"
-        yt_dlp_command = f'yt-dlp -x --audio-format mp3 --audio-quality {audio_quality} --cookies "{cookies_file}" --js-runtimes nodejs -o "{output_file}" "{song_url}"'
+        yt_dlp_command = f'yt-dlp -x --audio-format mp3 --audio-quality {audio_quality} --cookies "{cookies_file}" --js-runtimes node -o "{output_file}" "{song_url}"'
         logger.info(f"[Audio] Running yt-dlp command: {yt_dlp_command}")
         result = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
         logger.info(f"[Audio] yt-dlp stdout: {result.stdout}")
@@ -104,7 +106,7 @@ def download_video():
         if not cookies_file.exists():
             logger.error(f"[Video] Cookies file not found at {cookies_file}")
             return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
-        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes nodejs "{song_url}"'
+        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes node "{song_url}"'
         logger.info(f"[Video] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
         result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
         if result.stderr:
@@ -115,7 +117,7 @@ def download_video():
         temp_dir = Path('temp')
         temp_dir.mkdir(exist_ok=True)
         output_file = temp_dir / f"{video_title}_{video_quality}_{cache_buster}.mp4"
-        formats_command = f'yt-dlp --list-formats --cookies "{cookies_file}" --js-runtimes nodejs "{song_url}"'
+        formats_command = f'yt-dlp --list-formats --cookies "{cookies_file}" --js-runtimes node "{song_url}"'
         logger.info(f"[Video] Fetching available formats: {formats_command}")
         result = subprocess.run(formats_command, shell=True, capture_output=True, text=True)
         if result.stderr:
@@ -131,7 +133,7 @@ def download_video():
         used_format_code = None
         for format_code in adjusted_format_codes:
             try:
-                yt_dlp_command = f'yt-dlp --user-agent "{user_agent}" -f "{format_code}" --merge-output-format mp4 --cookies "{cookies_file}" --js-runtimes nodejs -o "{output_file}" "{song_url}"'
+                yt_dlp_command = f'yt-dlp --user-agent "{user_agent}" -f "{format_code}" --merge-output-format mp4 --cookies "{cookies_file}" --js-runtimes node -o "{output_file}" "{song_url}"'
                 logger.info(f"[Video] Running yt-dlp command with format {format_code}: {yt_dlp_command}")
                 result = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
                 logger.info(f"[Video] yt-dlp stdout: {result.stdout}")
