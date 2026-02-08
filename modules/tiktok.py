@@ -149,7 +149,7 @@ def download_tiktok_audio():
             logger.error("No valid URL extracted")
             return jsonify({"error": "Invalid URL, fix your shit"}), 400
 
-        if not (tiktok_url.startswith("https://www.tiktok.com/") or tiktok_url.startswirh("https://vt.tiktok.com") or tiktok_url.startswith("https://vm.tiktok.com/")):
+        if not (tiktok_url.startswith("https://www.tiktok.com/") or tiktok_url.startswith("https://vt.tiktok.com") or tiktok_url.startswith("https://vm.tiktok.com/")):
             logger.error(f"Invalid TikTok URL: {tiktok_url}")
             return jsonify({"error": "URL must be from tiktok.com or vm.tiktok.com, asshole"}), 400
 
