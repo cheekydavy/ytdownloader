@@ -42,9 +42,8 @@ def download_audio():
         cookies_file = Path('cookies.txt')
         if not cookies_file.exists():
             logger.error(f"[Audio] Cookies file not found at {cookies_file}")
-            return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
+            return jsonify({'error': 'Cookies file missing, can\'t authenticate with YouTube.'}), 500
 
-        # Fetch metadata
         metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github "{song_url}"'
         logger.info(f"[Audio] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
         result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
@@ -118,9 +117,8 @@ def download_video():
         cookies_file = Path('cookies.txt')
         if not cookies_file.exists():
             logger.error(f"[Video] Cookies file not found at {cookies_file}")
-            return jsonify({'error': 'Cookies file missing, can’t authenticate with YouTube.'}), 500
+            return jsonify({'error': 'Cookies file missing, can\'t authenticate with YouTube.'}), 500
 
-        # Fetch metadata (FIXED)
         metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github "{song_url}"'
         logger.info(f"[Video] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
         result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
@@ -147,11 +145,10 @@ def download_video():
             logger.warning(f"[Video] Requested formats not available. Falling back.")
             adjusted_format_codes = ['bestvideo[height<=720]+bestaudio/best', 'bestvideo[height<=480]+bestaudio/best', 'best']
 
-        logger.info(f"[Video] Using format codes: {", ".join(adjusted_format_codes)}")
+        logger.info(f"[Video] Using format codes: {', '.join(adjusted_format_codes)}")
 
         user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
         format_worked = False
-        used_format_code = None
 
         for format_code in adjusted_format_codes:
             try:
@@ -163,7 +160,6 @@ def download_video():
 
                 if output_file.exists():
                     format_worked = True
-                    used_format_code = format_code
                     break
             except Exception as e:
                 logger.error(f"[Video] Format {format_code} failed: {e}")

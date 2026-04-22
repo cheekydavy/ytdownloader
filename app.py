@@ -5,11 +5,10 @@ from modules.youtube import youtube_routes
 from modules.tiktok import tiktok_routes
 from modules.instagram import instagram_routes
 from modules.facebook import facebook_routes
-from modules.x import x_routes  # ✅ Import the X/Twitter route
+from modules.x import x_routes
 
 app = Flask(__name__)
 
-# Register blueprints for each downloader
 app.register_blueprint(youtube_routes, url_prefix='/')
 app.register_blueprint(tiktok_routes, url_prefix='/')
 app.register_blueprint(instagram_routes, url_prefix='/')

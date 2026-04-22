@@ -5,6 +5,7 @@ import tempfile
 
 facebook_routes = Blueprint('facebook', __name__)
 
+
 @facebook_routes.route('/api/fburl')
 def download():
     url = request.args.get('url')

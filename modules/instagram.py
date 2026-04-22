@@ -7,16 +7,14 @@ from apify_client import ApifyClient
 
 instagram_routes = Blueprint('instagram', __name__)
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Apify client with your API token (set via environment variable for security)
 api_token = os.environ.get('APIFY_API_TOKEN', '<YOUR_API_TOKEN>')
 client = ApifyClient(api_token)
 
+
 def download_via_apify(ig_url):
-    """Download video using Apify Instagram Scraper."""
     try:
         run_input = {
             "directUrls": [ig_url],
@@ -26,12 +24,8 @@ def download_via_apify(ig_url):
             "searchLimit": 1,
             "addParentData": False,
         }
-        
-        # Run the Actor and wait for it to finish
         run = client.actor("shu8hvrXbJbY3Eb9W").call(run_input=run_input)
         dataset_id = run["defaultDatasetId"]
-        
-        # Fetch results from the run's dataset
         for item in client.dataset(dataset_id).iterate_items():
             video_url = item.get("videoUrl") or item.get("media", [{}])[0].get("videoUrl")
             if video_url:
@@ -42,6 +36,7 @@ def download_via_apify(ig_url):
     except Exception as e:
         logger.error(f"Apify failed: {str(e)}")
         return None
+
 
 @instagram_routes.route('/download/iglink')
 def download():
@@ -62,13 +57,11 @@ def download():
         'quiet': True,
     }
 
-    # Primary: Apify
     video_url = download_via_apify(url)
     if video_url:
         logger.info(f"Redirecting to Apify video URL: {video_url}")
         return redirect(video_url)
 
-    # Fallback: yt-dlp
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             ydl_opts['outtmpl'] = f'{tmpdir}/%(id)s.%(ext)s'

@@ -6,9 +6,9 @@ import logging
 
 x_routes = Blueprint('x', __name__)
 
-# Enable logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 @x_routes.route('/api/xurl')
 def download():
@@ -17,7 +17,6 @@ def download():
         logger.error("Missing URL parameter")
         return Response('Missing URL parameter', status=400)
 
-    # Check if it's a Twitter/X link
     if not ("x.com" in url or "twitter.com" in url):
         logger.error(f"Invalid Twitter/X URL: {url}")
         return Response('URL must be from x.com or twitter.com', status=400)
@@ -35,11 +34,9 @@ def download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
-
                 if not os.path.exists(filename):
                     logger.error(f"File not found: {filename}")
                     return Response('Error: Video file not found', status=500)
-
                 return send_file(
                     filename,
                     as_attachment=True,
