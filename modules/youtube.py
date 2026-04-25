@@ -25,6 +25,14 @@ def init_limiter(app):
 def is_valid_youtube_url(url):
     return bool(re.match(r'^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|shorts\/|embed\/)?[A-Za-z0-9_-]{11}(\?.*)?$', url))
 
+def sanitize_title(title):
+    clean = re.sub(r'[\\/:*?"<>|]', '', title)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean or 'audio'
+
+def safe_filename(title):
+    return re.sub(r'[^a-zA-Z0-9 _-]', '_', title).strip() or 'audio'
+
 @youtube_routes.route('/download/audio', methods=['GET'])
 @limiter.limit("500 per 15min")
 def download_audio():
@@ -50,12 +58,15 @@ def download_audio():
         if result.stderr:
             logger.error(f"[Audio] Metadata fetch stderr: {result.stderr}")
         video_info = json.loads(result.stdout)
-        video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
-        logger.info(f"[Audio] Video title: {video_info['title']}, quality: {audio_quality}")
+
+        original_title = video_info.get('title', 'audio')
+        safe_title = safe_filename(original_title)
+        display_title = sanitize_title(original_title)
+        logger.info(f"[Audio] Title: {original_title}, quality: {audio_quality}")
 
         temp_dir = Path('temp')
         temp_dir.mkdir(exist_ok=True)
-        output_file = temp_dir / f"{video_title}_{audio_quality}_{cache_buster}.mp3"
+        output_file = temp_dir / f"{safe_title}_{cache_buster}.mp3"
 
         yt_dlp_command = f'yt-dlp -x --audio-format mp3 --audio-quality {audio_quality} --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github -o "{output_file}" "{song_url}"'
         logger.info(f"[Audio] Running yt-dlp command: {yt_dlp_command}")
@@ -67,10 +78,12 @@ def download_audio():
             logger.error('[Audio] Output file not found after yt-dlp command.')
             return jsonify({'error': 'Failed to download the audio.'}), 500
 
+        download_name = f"{display_title}.mp3"
+
         response = send_file(
             str(output_file),
             as_attachment=True,
-            download_name=f"{video_title}_{audio_quality}.mp3",
+            download_name=download_name,
             mimetype='audio/mpeg'
         )
 
@@ -85,7 +98,6 @@ def download_audio():
         logger.error(f"[Audio] Error in /download/audio: {str(e)}")
         if output_file and output_file.exists():
             output_file.unlink()
-            logger.info(f"[Audio] Cleaned up temp file on error: {output_file}")
         return jsonify({'error': 'Failed to download the audio.', 'details': str(e)}), 500
 
 
@@ -128,12 +140,14 @@ def download_video():
             return jsonify({'error': 'Metadata extraction failed - page needs reload', 'details': result.stderr}), 500
         video_info = json.loads(result.stdout)
 
-        video_title = re.sub(r'[^a-zA-Z0-9]', '_', video_info['title'])
-        logger.info(f"[Video] Video title: {video_info['title']}, requested quality: {video_quality}")
+        original_title = video_info.get('title', 'video')
+        safe_title = safe_filename(original_title)
+        display_title = sanitize_title(original_title)
+        logger.info(f"[Video] Title: {original_title}, requested quality: {video_quality}")
 
         temp_dir = Path('temp')
         temp_dir.mkdir(exist_ok=True)
-        output_file = temp_dir / f"{video_title}_{video_quality}_{cache_buster}.mp4"
+        output_file = temp_dir / f"{safe_title}_{cache_buster}.mp4"
 
         formats_command = f'yt-dlp --list-formats --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github "{song_url}"'
         logger.info(f"[Video] Fetching available formats: {formats_command}")
@@ -167,10 +181,12 @@ def download_video():
         if not format_worked:
             return jsonify({'error': 'Failed to download the video with any format.'}), 500
 
+        download_name = f"{display_title} [{video_quality}].mp4"
+
         response = send_file(
             str(output_file),
             as_attachment=True,
-            download_name=f"{video_title}_{video_quality}.mp4",
+            download_name=download_name,
             mimetype='video/mp4'
         )
 
