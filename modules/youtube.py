@@ -33,6 +33,9 @@ def sanitize_title(title):
 def safe_filename(title):
     return re.sub(r'[^a-zA-Z0-9 _-]', '_', title).strip() or 'audio'
 
+JS_ARGS = '--js-runtimes node'
+
+
 @youtube_routes.route('/download/audio', methods=['GET'])
 @limiter.limit("500 per 15min")
 def download_audio():
@@ -48,38 +51,43 @@ def download_audio():
     output_file = None
     try:
         cookies_file = Path('cookies.txt')
-        if not cookies_file.exists():
-            logger.error(f"[Audio] Cookies file not found at {cookies_file}")
-            return jsonify({'error': 'Cookies file missing, can\'t authenticate with YouTube.'}), 500
+        cookies_arg = f'--cookies "{cookies_file}"' if cookies_file.exists() else ''
 
-        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github "{song_url}"'
+        temp_dir = Path('temp')
+        temp_dir.mkdir(exist_ok=True)
+
+        metadata_command = f'yt-dlp --dump-json --no-playlist {JS_ARGS} {cookies_arg} "{song_url}"'
         logger.info(f"[Audio] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
         result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
-        if result.stderr:
-            logger.error(f"[Audio] Metadata fetch stderr: {result.stderr}")
-        video_info = json.loads(result.stdout)
 
+        if result.returncode != 0 or not result.stdout.strip():
+            logger.error(f"[Audio] Metadata failed: {result.stderr}")
+            return jsonify({'error': 'Failed to fetch video metadata.', 'details': result.stderr}), 500
+
+        video_info = json.loads(result.stdout)
         original_title = video_info.get('title', 'audio')
         safe_title = safe_filename(original_title)
         display_title = sanitize_title(original_title)
         logger.info(f"[Audio] Title: {original_title}, quality: {audio_quality}")
 
-        temp_dir = Path('temp')
-        temp_dir.mkdir(exist_ok=True)
         output_file = temp_dir / f"{safe_title}_{cache_buster}.mp3"
 
-        yt_dlp_command = f'yt-dlp -x --audio-format mp3 --audio-quality {audio_quality} --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github -o "{output_file}" "{song_url}"'
-        logger.info(f"[Audio] Running yt-dlp command: {yt_dlp_command}")
+        yt_dlp_command = (
+            f'yt-dlp -x --audio-format mp3 --audio-quality {audio_quality} '
+            f'--embed-thumbnail --convert-thumbnails jpg '
+            f'--no-playlist {JS_ARGS} {cookies_arg} '
+            f'-o "{output_file}" "{song_url}"'
+        )
+        logger.info(f"[Audio] Running yt-dlp")
         result = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
-        logger.info(f"[Audio] yt-dlp stdout: {result.stdout}")
-        logger.info(f"[Audio] yt-dlp stderr: {result.stderr}")
+        if result.stderr:
+            logger.info(f"[Audio] yt-dlp stderr: {result.stderr}")
 
         if not output_file.exists():
             logger.error('[Audio] Output file not found after yt-dlp command.')
-            return jsonify({'error': 'Failed to download the audio.'}), 500
+            return jsonify({'error': 'Failed to download the audio.', 'details': result.stderr}), 500
 
         download_name = f"{display_title}.mp3"
-
         response = send_file(
             str(output_file),
             as_attachment=True,
@@ -89,9 +97,13 @@ def download_audio():
 
         @after_this_request
         def cleanup(response):
-            if output_file.exists():
-                output_file.unlink()
-                logger.info(f"[Audio] Cleaned up temp file: {output_file}")
+            for ext in ('', '.jpg', '.jpeg', '.png', '.webp'):
+                p = Path(str(output_file).replace('.mp3', ext) if ext else str(output_file))
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except Exception:
+                        pass
             return response
         return response
     except Exception as e:
@@ -115,31 +127,29 @@ def download_video():
     video_quality = quality if quality in valid_video_qualities else '1080p'
 
     quality_format_map = {
-        '144p': ['160+251', '133+251', '134+251'],
-        '240p': ['133+251', '134+251', '135+251'],
-        '360p': ['18', '134+251', '135+251', '136+251'],
-        '480p': ['135+251', '136+251', '137+251'],
-        '720p': ['136+251', '137+251', '135+251'],
-        '1080p': ['137+251', '136+251', '135+251'],
+        '144p': ['160+140', '160+251', 'bestvideo[height<=144]+bestaudio/best'],
+        '240p': ['133+140', '133+251', 'bestvideo[height<=240]+bestaudio/best'],
+        '360p': ['18', '134+140', '134+251', 'bestvideo[height<=360]+bestaudio/best'],
+        '480p': ['135+140', '135+251', 'bestvideo[height<=480]+bestaudio/best'],
+        '720p': ['22', '136+140', '136+251', 'bestvideo[height<=720]+bestaudio/best'],
+        '1080p': ['137+140', '137+251', 'bestvideo[height<=1080]+bestaudio/best'],
     }
-    format_codes = quality_format_map.get(video_quality, ['137+251', '136+251', '135+251'])
+    format_codes = quality_format_map.get(video_quality, ['bestvideo+bestaudio/best'])
 
     output_file = None
     try:
         cookies_file = Path('cookies.txt')
-        if not cookies_file.exists():
-            logger.error(f"[Video] Cookies file not found at {cookies_file}")
-            return jsonify({'error': 'Cookies file missing, can\'t authenticate with YouTube.'}), 500
+        cookies_arg = f'--cookies "{cookies_file}"' if cookies_file.exists() else ''
 
-        metadata_command = f'yt-dlp --dump-json --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github "{song_url}"'
+        metadata_command = f'yt-dlp --dump-json --no-playlist {JS_ARGS} {cookies_arg} "{song_url}"'
         logger.info(f"[Video] Fetching metadata for URL: {song_url}, cacheBuster: {cache_buster}")
         result = subprocess.run(metadata_command, shell=True, capture_output=True, text=True)
-        if result.stderr:
-            logger.error(f"[Video] Metadata fetch stderr: {result.stderr}")
-        if not result.stdout.strip():
-            return jsonify({'error': 'Metadata extraction failed - page needs reload', 'details': result.stderr}), 500
-        video_info = json.loads(result.stdout)
 
+        if result.returncode != 0 or not result.stdout.strip():
+            logger.error(f"[Video] Metadata failed: {result.stderr}")
+            return jsonify({'error': 'Metadata extraction failed.', 'details': result.stderr}), 500
+
+        video_info = json.loads(result.stdout)
         original_title = video_info.get('title', 'video')
         safe_title = safe_filename(original_title)
         display_title = sanitize_title(original_title)
@@ -149,30 +159,19 @@ def download_video():
         temp_dir.mkdir(exist_ok=True)
         output_file = temp_dir / f"{safe_title}_{cache_buster}.mp4"
 
-        formats_command = f'yt-dlp --list-formats --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github "{song_url}"'
-        logger.info(f"[Video] Fetching available formats: {formats_command}")
-        result = subprocess.run(formats_command, shell=True, capture_output=True, text=True)
-
-        available_formats = result.stdout
-        adjusted_format_codes = [code for code in format_codes if code.split('+')[0] in available_formats]
-        if not adjusted_format_codes:
-            logger.warning(f"[Video] Requested formats not available. Falling back.")
-            adjusted_format_codes = ['bestvideo[height<=720]+bestaudio/best', 'bestvideo[height<=480]+bestaudio/best', 'best']
-
-        logger.info(f"[Video] Using format codes: {', '.join(adjusted_format_codes)}")
-
-        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
         format_worked = False
-
-        for format_code in adjusted_format_codes:
+        for format_code in format_codes:
             try:
-                yt_dlp_command = f'yt-dlp --user-agent "{user_agent}" -f "{format_code}" --merge-output-format mp4 --cookies "{cookies_file}" --js-runtimes node --remote-components ejs:github -o "{output_file}" "{song_url}"'
-                logger.info(f"[Video] Running yt-dlp with format {format_code}")
+                yt_dlp_command = (
+                    f'yt-dlp -f "{format_code}" --merge-output-format mp4 '
+                    f'--no-playlist {JS_ARGS} {cookies_arg} '
+                    f'-o "{output_file}" "{song_url}"'
+                )
+                logger.info(f"[Video] Trying format: {format_code}")
                 result = subprocess.run(yt_dlp_command, shell=True, capture_output=True, text=True)
-                logger.info(f"[Video] yt-dlp stdout: {result.stdout}")
-                logger.info(f"[Video] yt-dlp stderr: {result.stderr}")
-
-                if output_file.exists():
+                if result.stderr:
+                    logger.info(f"[Video] stderr: {result.stderr}")
+                if output_file.exists() and output_file.stat().st_size > 0:
                     format_worked = True
                     break
             except Exception as e:
