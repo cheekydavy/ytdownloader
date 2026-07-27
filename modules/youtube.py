@@ -33,7 +33,7 @@ def sanitize_title(title):
 def safe_filename(title):
     return re.sub(r'[^a-zA-Z0-9 _-]', '_', title).strip() or 'audio'
 
-JS_ARGS = '--js-runtimes node'
+JS_ARGS = '--js-runtimes node --remote-components ejs:github'
 
 
 @youtube_routes.route('/download/audio', methods=['GET'])
